@@ -379,16 +379,32 @@ pauseBtn('pause-restart', () => { saveCheckpoint(); save.clear(); journal.clear(
 pauseBtn('pause-menu', () => { saveCheckpoint(); location.href = location.pathname + '?menu'; });
 
 // the journal is also reachable from the main menu; Back returns to whichever
-// screen is underneath (menu or pause) since openOverlay leaves it in place.
+// screen is underneath (menu or pause) — see overlayUnder below.
 document.getElementById('menu-journal')?.addEventListener('click', () => openOverlay('journal'));
+
+let overlayUnder = null;    // 'menu' | 'pause' — which screen the overlay is covering
 
 function openOverlay(which) {
   overlay = which;
+  // Hide the screen underneath so the journal is its OWN full screen rather than
+  // an opaque layer composited over the menu / pause (which could bleed through
+  // or leave the menu on top of the journal's Back button in some browsers).
+  overlayUnder = (state === 'PAUSE') ? 'pause' : 'menu';
+  if (overlayUnder === 'pause') ui.showPause(false); else menu.hide();
   if (which === 'journal') journalUI.show();
 }
 function closeOverlay() {
+  const wasOpen = overlay !== null;
   journalUI.hide();
   overlay = null;
+  // Backing out of the journal restores the screen it was covering. Guarded on
+  // wasOpen so the defensive closeOverlay() calls in showMenu/beginGame — which
+  // run when nothing is open — never re-show a screen behind the game.
+  if (wasOpen) {
+    if (overlayUnder === 'pause') ui.showPause(true);
+    else if (overlayUnder === 'menu') menu.show();
+  }
+  overlayUnder = null;
 }
 
 function refreshPauseMeta() {
