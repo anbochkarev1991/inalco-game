@@ -32,6 +32,18 @@ export class Player {
     this.flashCharge = 1;
     this.flashBurstT = 0;
 
+    // --- camera "raise to the eye" viewfinder + lens zoom (the photo mechanic) ---
+    // Raising narrows the field of view (you're looking through the finder),
+    // slows the walk, and steadies the head. Zoom narrows it further, so the same
+    // camera doubles as binoculars for glassing the treeline and the dock.
+    this.baseFov = camera.fov;   // resting field of view (71°)
+    this.aimFovBase = 56;        // through-the-finder FOV at 1× zoom
+    this.aiming = false;         // is the camera held up to the eye?
+    this.aimT = 0;               // eased 0..1 raise amount (drives FOV + the overlay)
+    this.zoom = 1;               // current lens zoom (1× wide … zoomMax telephoto)
+    this._zoomTarget = 1;
+    this.zoomMax = 4;
+
     // flashlight rig (lags behind the view for weight)
     // decay 2 = physical falloff: a strong pool up close that the fog swallows
     // by ~18m instead of a searchlight reaching the treeline
@@ -73,8 +85,10 @@ export class Player {
 
   look(dx, dy) {
     if (this.frozen || this.dead) return;
-    this.yaw -= dx * 0.0023;
-    this.pitch -= dy * 0.0023;
+    // steadier aim the more the lens is zoomed in (sensitivity tracks the FOV)
+    const s = 0.0023 * (this.camera.fov / this.baseFov);
+    this.yaw -= dx * s;
+    this.pitch -= dy * s;
     this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch));
   }
 
@@ -124,6 +138,22 @@ export class Player {
     return true;
   }
 
+  // Raise / lower the camera to the eye. Guarded so it can't happen while dead
+  // or frozen (intro / cutscene). Lowering resets the lens back to wide.
+  raiseCamera(on) {
+    on = !!on && !this.dead && !this.frozen;
+    if (on === this.aiming) return;
+    this.aiming = on;
+    if (on) this.audio.cameraRaise?.();
+    else { this.audio.cameraLower?.(); this._zoomTarget = 1; }
+  }
+
+  // Nudge the lens zoom (wheel / keys). Ignored unless the camera is raised.
+  zoomBy(delta) {
+    if (!this.aiming) return;
+    this._zoomTarget = Math.max(1, Math.min(this.zoomMax, this._zoomTarget + delta));
+  }
+
   hit(dmg, fromPos) {
     if (this.iframes > 0 || this.dead) return false;
     this.composure -= dmg;
@@ -157,6 +187,16 @@ export class Player {
     if (!wasCharged && this.flashCharge >= 1) this.audio.rechargeDone();
     this.flashBurstT = Math.max(0, this.flashBurstT - dt * 5);
 
+    // ---- camera raise + lens zoom → field of view
+    if (this.dead || this.frozen) this.aiming = false;
+    this.aimT += ((this.aiming ? 1 : 0) - this.aimT) * Math.min(1, dt * 9);
+    this.zoom += (this._zoomTarget - this.zoom) * Math.min(1, dt * 10);
+    const fov = this.baseFov + (this.aimFovBase / this.zoom - this.baseFov) * this.aimT;
+    if (Math.abs(this.camera.fov - fov) > 0.0015) {
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
+    }
+
     // ---- movement
     let mx = 0, mz = 0;
     if (!this.frozen && !this.dead) {
@@ -166,7 +206,7 @@ export class Player {
       if (input.r) mx += 1;
     }
     const moving = (mx !== 0 || mz !== 0);
-    let wantRun = input.run && moving && mz < 0.5;
+    let wantRun = input.run && moving && mz < 0.5 && !this.aiming;   // no sprinting with the camera up
     if (this.exhausted) wantRun = false;
     if (wantRun) {
       this.stamina -= dt;
@@ -175,7 +215,7 @@ export class Player {
       this.stamina = Math.min(T.staminaMax, this.stamina + dt * 0.75);
       if (this.exhausted && this.stamina > T.staminaMax * 0.35) this.exhausted = false;
     }
-    const speed = wantRun ? T.runSpeed : T.walkSpeed;
+    const speed = (wantRun ? T.runSpeed : T.walkSpeed) * (1 - 0.55 * this.aimT);   // slow, careful steps while framing
 
     if (moving) {
       const inv = 1 / Math.hypot(mx, mz);
@@ -219,8 +259,9 @@ export class Player {
     if (Math.floor(prevPhase / Math.PI) !== Math.floor(this.bobPhase / Math.PI) && speedNow > 0.6) {
       this.audio.footstep(this.surface);
     }
-    const bobY = Math.sin(this.bobPhase * 2) * 0.042 * this.bobAmp;
-    const bobX = Math.cos(this.bobPhase) * 0.03 * this.bobAmp;
+    const steady = 1 - 0.82 * this.aimT;    // the finder damps the sway of the walk
+    const bobY = Math.sin(this.bobPhase * 2) * 0.042 * this.bobAmp * steady;
+    const bobX = Math.cos(this.bobPhase) * 0.03 * this.bobAmp * steady;
 
     // low-composure sway
     const fear = 1 - this.composure / T.composureMax;

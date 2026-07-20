@@ -202,6 +202,12 @@ export class GameAudio {
   doorCreak() { this._tone(210, 0.9, { type: 'sawtooth', gain: 0.035, glideTo: 150 }); this._burst(0.5, 500, 4, 0.04); }
   unlock() { this._tone(320, 0.06, { type: 'square', gain: 0.07 }); this._tone(240, 0.08, { type: 'square', gain: 0.08, delay: 0.09 }); }
   switchClick() { this._tone(900, 0.03, { type: 'square', gain: 0.08 }); }
+  // bringing the camera up to / down from the eye: a soft strap-and-body shift
+  cameraRaise() {
+    this._burst(0.13, 780, 0.7, 0.05, { type: 'lowpass' });
+    this._tone(210, 0.07, { type: 'sine', gain: 0.045, delay: 0.02 });
+  }
+  cameraLower() { this._burst(0.11, 620, 0.7, 0.04, { type: 'lowpass' }); }
   drawer() { this._burst(0.3, 350, 2, 0.1, { glideTo: 220 }); }
   uiClick() { this._tone(660, 0.04, { gain: 0.05 }); }
   dialogBlip() { this._tone(430 + Math.random() * 60, 0.03, { gain: 0.018 }); }
