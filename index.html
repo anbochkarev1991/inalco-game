@@ -95,6 +95,52 @@
   #polaroid .cap{ font-family:'Courier New',monospace; font-size:10.5px; color:#33302a;
     margin-top:9px; line-height:1.5; }
 
+  /* ---------- Camera viewfinder ---------- */
+  /* No z-index: it sits above the HUD (earlier in DOM) but below notes / dialog /
+     screens / fader (later in DOM). Opacity is driven per-frame from aim. */
+  #viewfinder{ position:absolute; inset:0; opacity:0; transition:opacity .08s linear;
+    font-family:'Courier New',monospace; }
+  /* the finder gate: a rounded window with everything outside it darkened, as if
+     your eye is pressed to the eyepiece */
+  #viewfinder .vf-gate{ position:absolute; inset:7% 6.5%; border-radius:20px;
+    box-shadow:0 0 0 100vmax rgba(3,5,7,.66), inset 0 0 90px 14px rgba(0,0,0,.6);
+    outline:1px solid rgba(230,225,211,.08); }
+  .vf-corner{ position:absolute; width:34px; height:34px; border:2px solid rgba(230,225,211,.7); }
+  .vf-corner.tl{ left:14px; top:14px; border-right:0; border-bottom:0; }
+  .vf-corner.tr{ right:14px; top:14px; border-left:0; border-bottom:0; }
+  .vf-corner.bl{ left:14px; bottom:14px; border-right:0; border-top:0; }
+  .vf-corner.br{ right:14px; bottom:14px; border-left:0; border-top:0; }
+  .vf-hud{ position:absolute; left:26px; right:26px; display:flex; justify-content:space-between;
+    font-size:11px; letter-spacing:.18em; color:rgba(230,225,211,.82); text-shadow:0 1px 4px #000; }
+  .vf-hud-top{ top:22px; }
+  .vf-hud-bot{ bottom:22px; align-items:center; }
+  .vf-tag{ display:inline-flex; align-items:center; gap:7px; }
+  #vf-ready{ color:#e0a24a; }               /* amber while the capacitor charges */
+  #vf-ready.ready{ color:#8fe08a; }         /* green when the shutter is armed */
+  .vf-rec{ width:8px; height:8px; border-radius:50%; background:var(--red);
+    box-shadow:0 0 8px var(--red); animation:vfblink 1.6s steps(1) infinite; }
+  @keyframes vfblink{ 0%,60%{opacity:1;} 61%,100%{opacity:.15;} }
+
+  #vf-reticle{ position:absolute; left:50%; top:50%; width:120px; height:120px;
+    transform:translate(-50%,-50%); }
+  .vf-ring{ position:absolute; inset:0; border-radius:50%; border:1.4px solid rgba(230,225,211,.42); }
+  #vf-reticle.ready .vf-ring{ border-color:rgba(143,224,138,.6); }
+  .vf-af{ position:absolute; width:12px; height:12px; border:1.5px solid rgba(230,225,211,.75); }
+  .vf-af.tl{ left:-3px; top:-3px; border-right:0; border-bottom:0; }
+  .vf-af.tr{ right:-3px; top:-3px; border-left:0; border-bottom:0; }
+  .vf-af.bl{ left:-3px; bottom:-3px; border-right:0; border-top:0; }
+  .vf-af.br{ right:-3px; bottom:-3px; border-left:0; border-top:0; }
+  .vf-tick{ position:absolute; left:50%; top:50%; background:rgba(230,225,211,.55); }
+  .vf-tick.h{ width:26px; height:1px; transform:translate(-50%,-50%); }
+  .vf-tick.v{ width:1px; height:26px; transform:translate(-50%,-50%); }
+  .vf-dot{ position:absolute; left:50%; top:50%; width:3px; height:3px; border-radius:50%;
+    background:rgba(230,225,211,.85); transform:translate(-50%,-50%); }
+  #vf-reticle.ready .vf-dot{ background:#8fe08a; }
+
+  #vf-shutter{ position:absolute; inset:0; background:#04060a; opacity:0; }
+  #vf-shutter.fire{ animation:vfshutter .16s ease-out; }
+  @keyframes vfshutter{ 0%{opacity:0;} 22%{opacity:1;} 100%{opacity:0;} }
+
   /* ---------- Full screens ---------- */
   .screen{ position:absolute; inset:0; display:none; align-items:center; justify-content:center;
     flex-direction:column; text-align:center; background:#04060a; }
@@ -139,13 +185,36 @@
   #death-screen .cont{ margin-top:46px; font-family:'Courier New',monospace; font-size:12px;
     letter-spacing:.26em; color:#7a7264; animation:pulse 2.2s infinite; }
 
-  #end-screen{ background:#020304; }
+  #end-screen{ background:#020304; overflow:hidden; }
+  /* phase 1 — the typed narrative + ending title, centred */
+  #end-narrative{ display:flex; flex-direction:column; align-items:center;
+    transition:opacity 1.4s; }
+  #end-narrative.gone{ opacity:0; }
   #end-text{ width:min(680px, 86vw); font-family:'Courier New',monospace; font-size:15px;
     line-height:2.05; color:var(--bone); text-align:left; white-space:pre-wrap; }
   #end-title{ margin-top:44px; font-size:44px; letter-spacing:.4em; text-indent:.4em;
     color:#dfe6e4; opacity:0; transition:opacity 3s; }
   #end-title.on{ opacity:1; }
-  #end-hint{ margin-top:30px; font-family:'Courier New',monospace; font-size:11px;
+  /* phase 2 — the credits roll: an absolutely-positioned column scrolled up the
+     screen by a per-frame translateY (see ui.js). Fades in over the narrative. */
+  #end-credits{ position:absolute; left:0; top:0; width:100%;
+    display:flex; flex-direction:column; align-items:center; text-align:center;
+    padding:0 8vw; box-sizing:border-box; opacity:0; transition:opacity 1.4s;
+    pointer-events:none; will-change:transform; }
+  #end-credits.on{ opacity:1; }
+  #end-credits h3{ font-size:38px; letter-spacing:.36em; text-indent:.36em; font-weight:400;
+    color:#dfe6e4; margin:0; text-shadow:0 0 26px rgba(159,216,255,.2); }
+  #end-credits .role{ font-family:'Courier New',monospace; font-size:11px; letter-spacing:.28em;
+    color:#5f6b6e; text-transform:uppercase; margin-top:46px; }
+  #end-credits .name{ font-family:Georgia,serif; font-size:21px; letter-spacing:.12em;
+    color:var(--bone); margin-top:9px; }
+  #end-credits .blurb{ font-family:'Courier New',monospace; font-size:13px; line-height:2;
+    color:var(--bone-dim); max-width:540px; margin-top:18px; }
+  #end-credits .rule{ width:44px; height:1px; background:rgba(230,225,211,.28); margin:48px 0; }
+  #end-credits .fin{ font-style:italic; font-size:16px; color:var(--bone-dim); line-height:1.9;
+    margin-top:14px; }
+  #end-hint{ position:absolute; bottom:30px; left:0; width:100%; text-align:center;
+    font-family:'Courier New',monospace; font-size:11px;
     letter-spacing:.26em; color:#5f6b6e; opacity:0; transition:opacity 2s; }
   #end-hint.on{ opacity:1; }
 
@@ -255,6 +324,29 @@
     <div id="prompt"></div>
     <div id="subtitle"></div>
 
+    <div id="viewfinder">
+      <div class="vf-gate">
+        <span class="vf-corner tl"></span><span class="vf-corner tr"></span>
+        <span class="vf-corner bl"></span><span class="vf-corner br"></span>
+        <div class="vf-hud vf-hud-top">
+          <span class="vf-tag">INALCO · AF-S</span>
+          <span class="vf-tag" id="vf-zoom">1.0×</span>
+        </div>
+        <div class="vf-hud vf-hud-bot">
+          <span class="vf-tag" id="vf-ready">FLASH ● READY</span>
+          <span class="vf-tag"><span class="vf-rec"></span>[<span id="vf-frames">000</span>]</span>
+        </div>
+      </div>
+      <div id="vf-reticle">
+        <span class="vf-ring"></span>
+        <span class="vf-af tl"></span><span class="vf-af tr"></span>
+        <span class="vf-af bl"></span><span class="vf-af br"></span>
+        <span class="vf-tick h"></span><span class="vf-tick v"></span>
+        <span class="vf-dot"></span>
+      </div>
+      <div id="vf-shutter"></div>
+    </div>
+
     <div id="note">
       <div id="note-paper">
         <div id="note-kind"></div>
@@ -282,7 +374,8 @@
       <div id="title-start">CLICK TO BEGIN</div>
       <div id="title-controls">
         WASD MOVE &nbsp;·&nbsp; MOUSE LOOK &nbsp;·&nbsp; SHIFT RUN &nbsp;·&nbsp; E INTERACT<br/>
-        F FLASHLIGHT &nbsp;·&nbsp; LEFT CLICK CAMERA FLASH &nbsp;·&nbsp; ESC PAUSE
+        HOLD RIGHT-CLICK RAISE CAMERA &nbsp;·&nbsp; LEFT CLICK SHUTTER &nbsp;·&nbsp; WHEEL ZOOM<br/>
+        F FLASHLIGHT &nbsp;·&nbsp; ESC PAUSE
       </div>
     </div>
 
@@ -301,7 +394,8 @@
       </div>
       <div class="menu-controls">
         WASD MOVE &nbsp;·&nbsp; MOUSE LOOK &nbsp;·&nbsp; SHIFT RUN &nbsp;·&nbsp; E INTERACT<br/>
-        F FLASHLIGHT &nbsp;·&nbsp; LEFT CLICK CAMERA FLASH &nbsp;·&nbsp; ESC PAUSE
+        HOLD RIGHT-CLICK RAISE CAMERA &nbsp;·&nbsp; LEFT CLICK SHUTTER &nbsp;·&nbsp; WHEEL ZOOM<br/>
+        F FLASHLIGHT &nbsp;·&nbsp; ESC PAUSE
       </div>
     </div>
 
@@ -346,9 +440,12 @@
     </div>
 
     <div id="end-screen" class="screen">
-      <div id="end-text"></div>
-      <div id="end-title">INALCO</div>
-      <div id="end-hint">[R] RESTART</div>
+      <div id="end-narrative">
+        <div id="end-text"></div>
+        <div id="end-title">INALCO</div>
+      </div>
+      <div id="end-credits"></div>
+      <div id="end-hint"></div>
     </div>
 
     <div id="fader"></div>

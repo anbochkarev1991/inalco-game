@@ -71,6 +71,34 @@ let pendingPolaroid = null;
 let pendingReveal = null;       // b2: a photo-only reveal awaiting capture (see reveals.js)
 let gameOverText = null;
 
+// The credits roll shown after the ending narrative (see ui.showEnding). Author
+// + how the game was made; scrolls up the screen, then returns to the main menu.
+const CREDITS_HTML = `
+  <h3>INALCO</h3>
+  <div class="fin">a survival-horror experiment</div>
+
+  <div class="role">written · designed · directed</div>
+  <div class="name">Anton Bochkarev</div>
+
+  <div class="rule"></div>
+
+  <div class="role">made in collaboration with</div>
+  <div class="name">Claude · Anthropic</div>
+  <div class="blurb">This game is an experiment: an entire survival-horror world —
+    its fog, its lake, and the Returned who wait in it — designed and built in
+    conversation with an AI. Every system here began as a question and an answer.</div>
+
+  <div class="rule"></div>
+
+  <div class="role">built with</div>
+  <div class="name">three.js · Web Audio · vanilla JavaScript</div>
+
+  <div class="rule"></div>
+
+  <div class="blurb">Thank you for spending a night on the lake.</div>
+  <div class="fin">The lake keeps what it is given.<br>Give it nothing.</div>
+`;
+
 // a3: front-window gathering posts. When the generator is on, ambient Returned
 // that aren't chasing drift up to the lit front windows and stand here, facing
 // the house, at the edge of the light ("the lights bring them up to the
@@ -193,6 +221,7 @@ let introT = 0;
 let introFired = new Set();
 let holdItem = null, holdT = 0, holdConsumed = false;
 let flashHintT = 26;
+let raiseHintN = 3;     // times left to hint "hold right-click to raise the camera"
 const SAVE_EVERY = 20;      // periodic autosave cadence (s of live play)
 let saveT = SAVE_EVERY;
 
@@ -202,6 +231,8 @@ window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   // an open options/journal overlay: Esc backs out to whatever is underneath
   if (overlay) { if (e.code === 'Escape') closeOverlay(); return; }
+  // the finale: any key fast-forwards the current credits phase (never freezes)
+  if (state === 'END') { ui.endAdvance(); return; }
   const k = KEYMAP[e.code];
   if (k) input[k] = true;
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') input.run = true;
@@ -228,7 +259,6 @@ window.addEventListener('keydown', (e) => {
     player.toggleFlashlight();
     world.setFlashlight(player.flashOn);
   }
-  if (e.code === 'KeyR' && state === 'END') location.reload();
   if (state === 'INTRO' && (e.code === 'Space' || e.code === 'Enter')) skipIntro();
 });
 window.addEventListener('keyup', (e) => {
@@ -247,6 +277,7 @@ document.addEventListener('mousemove', (e) => {
 
 document.addEventListener('mousedown', (e) => {
   if (overlay) return;                              // options/journal have their own buttons
+  if (state === 'END') { ui.endAdvance(); return; } // finale: click skips the current credits phase
   if (state === 'TITLE') { showMenu(); return; }    // title now leads to the menu
   if (state === 'MENU') return;                     // menu buttons handle their own clicks
   if (state === 'INTRO') { skipIntro(); return; }
@@ -256,7 +287,15 @@ document.addEventListener('mousedown', (e) => {
     return;
   }
   if (state === 'PLAY' && document.pointerLockElement === renderer.domElement && !ui.noteOpen) {
+    if (e.button === 2) { player.raiseCamera(true); return; }   // right-click: raise camera to the eye
+    if (e.button !== 0) return;
+    if (!player.aiming) {
+      // the shutter only fires through the finder — nudge them to raise it first
+      if (raiseHintN > 0) { ui.say('', '(hold right-click to raise the camera)', 2.6); raiseHintN--; }
+      return;
+    }
     if (player.tryFlash()) {
+      ui.shutterBlink();
       fx.flash = Math.max(fx.flash, 0.85);
       const hits = director.flash(player.camera.position, player.camDir());
       buildings.cellar.girl.flash(player.camera.position, player.camDir());
@@ -277,6 +316,21 @@ document.addEventListener('mousedown', (e) => {
   }
 });
 
+// releasing right-click lowers the camera (window-level so a release outside the
+// canvas still counts)
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 2) player.raiseCamera(false);
+});
+// wheel zooms the lens while the camera is raised
+window.addEventListener('wheel', (e) => {
+  if (state === 'PLAY' && player.aiming) {
+    e.preventDefault();
+    player.zoomBy(e.deltaY < 0 ? 0.45 : -0.45);
+  }
+}, { passive: false });
+// right-click is a game control, not a context menu
+window.addEventListener('contextmenu', (e) => e.preventDefault());
+
 function requestLock() {
   try {
     const p = renderer.domElement.requestPointerLock?.();
@@ -288,6 +342,7 @@ document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === renderer.domElement;
   if (locked && state === 'PAUSE') { state = 'PLAY'; ui.showPause(false); }
   else if (!locked && state === 'PLAY') {
+    player.raiseCamera(false);   // never leave the finder up over the pause screen
     state = 'PAUSE'; refreshPauseMeta(); ui.showPause(true);
     saveCheckpoint();     // pausing is a natural save point
   }
@@ -441,16 +496,26 @@ function endSequence() {
   ui.setFadeWhite(true);
   ui.fade(true);
   setTimeout(() => {
-    ui.showEnding(gameOverText);
+    ui.showEnding(gameOverText, CREDITS_HTML, endToMenu);
     ui.setFadeWhite(false);
     ui.fade(false);   // clear the fader so the ending screen shows through
   }, 2400);
+}
+
+// The credits finished (or the player skipped them). The game is won, so drop
+// the checkpoint (nothing left to continue) and reload straight to the main
+// menu. A full reload rebuilds a fresh world, so BEGIN/CONTINUE work correctly
+// afterwards — the finale never freezes on the titles.
+function endToMenu() {
+  save.clear();
+  location.href = location.pathname + '?menu';
 }
 
 let deathT = 0;
 function startDeath() {
   if (player.dead) return;
   player.dead = true;
+  player.raiseCamera(false);   // drop the camera if the shutter caught you mid-shot
   deathT = 0;
   audio.deathWash();
   fx.glitch = 1;
@@ -530,6 +595,13 @@ function frame() {
   const dt = Math.min(0.05, clock.getDelta());
   time += dt;
   ui.update(dt);
+
+  // camera viewfinder overlay — fades with the aim, shows lens/flash/frame readouts
+  ui.viewfinder({
+    aim: player.aimT, zoom: player.zoom, charge: player.flashCharge,
+    frames: journal.photos.length,
+    active: state === 'PLAY' && !ui.noteOpen && !dialog.open,
+  });
 
   const simRunning = (state === 'PLAY' || state === 'INTRO') && !ui.noteOpen && !dialog.open;
 
@@ -664,7 +736,7 @@ function frame() {
       if (saveT <= 0) { saveT = SAVE_EVERY; saveCheckpoint(); }
     }
 
-    ui.flashPip(player.flashCharge, state === 'PLAY');
+    ui.flashPip(player.flashCharge, state === 'PLAY' && player.aimT < 0.3);   // finder shows its own readout
     ui.setEvidence(story.evidence, 6);
   }
 
