@@ -184,7 +184,7 @@
     font-family:'Courier New',monospace; font-size:11px; letter-spacing:.16em; color:#55606a;
     line-height:2; }
 
-  #journal-screen{ background:rgba(4,6,10,.94); }
+  #journal-screen{ background:#06090e; }
 
   .journal-head{ position:absolute; top:26px; left:0; width:100%; display:flex;
     justify-content:space-between; align-items:center; padding:0 34px; }
@@ -197,17 +197,42 @@
   .journal-body{ position:relative; width:min(860px,92vw); max-height:74vh; overflow-y:auto;
     margin-top:56px; padding:6px; }
   .jempty{ font-style:italic; color:var(--bone-dim); font-size:15px; text-align:center; padding:60px 20px; }
-  .jphotos{ display:grid; grid-template-columns:repeat(auto-fill, minmax(180px,1fr)); gap:18px; }
-  .jphoto{ background:#f2efe6; padding:8px 8px 10px; box-shadow:0 12px 34px rgba(0,0,0,.7); transform:rotate(-.6deg); }
+  .jphotos{ display:grid; grid-template-columns:repeat(auto-fill, minmax(210px,1fr)); gap:22px; padding:4px 2px 12px; }
+  .jphoto{ pointer-events:auto; cursor:pointer; display:block; width:100%; border:0; text-align:left;
+    background:#f4f1e8; padding:10px 10px 12px; box-shadow:0 12px 34px rgba(0,0,0,.7); transform:rotate(-.6deg);
+    transition:transform .18s ease, box-shadow .18s ease; }
   .jphoto:nth-child(even){ transform:rotate(.7deg); }
-  .jphoto img{ width:100%; display:block; filter:contrast(1.08) saturate(.7); }
-  .jphoto figcaption{ font-family:'Courier New',monospace; font-size:10px; color:#33302a; margin-top:7px; line-height:1.5; }
+  .jphoto:hover, .jphoto:focus-visible{ transform:rotate(0) scale(1.045); box-shadow:0 20px 48px rgba(0,0,0,.82);
+    outline:none; position:relative; z-index:1; }
+  .jphoto img{ width:100%; display:block; filter:contrast(1.04) saturate(.94) brightness(1.07); }
+  .jphoto figcaption{ font-family:'Courier New',monospace; font-size:10.5px; color:#2a2823; margin-top:8px; line-height:1.5; }
   .jnotes{ display:flex; flex-direction:column; gap:16px; }
   .jnote{ background:rgba(233,226,207,.94); color:var(--ink); padding:18px 22px;
     font-family:'Courier New',monospace; text-align:left; box-shadow:0 10px 28px rgba(0,0,0,.6); }
   .jnote-kind{ font-size:9.5px; letter-spacing:.3em; color:#8a4b2f; margin-bottom:7px; }
   .jnote-title{ font-size:14px; font-weight:700; letter-spacing:.05em; margin-bottom:10px; }
   .jnote-body{ font-size:12.5px; line-height:1.7; white-space:pre-wrap; }
+
+  /* ---------- Journal lightbox (click a photo to enlarge) ---------- */
+  #jlightbox{ position:absolute; inset:0; z-index:60; pointer-events:auto;
+    display:none; align-items:center; justify-content:center;
+    background:rgba(2,3,5,.94); backdrop-filter:blur(3px); }
+  #jlightbox.on{ display:flex; }
+  .jlb-frame{ display:flex; flex-direction:column; align-items:center;
+    max-width:min(1100px,92vw); max-height:92vh; }
+  .jlb-photo{ background:#f4f1e8; padding:16px 16px 14px; box-shadow:0 30px 90px rgba(0,0,0,.9); }
+  .jlb-photo img{ display:block; max-width:min(1000px,84vw); max-height:70vh; width:auto; height:auto;
+    filter:contrast(1.04) saturate(.96) brightness(1.07); }
+  .jlb-cap{ font-family:'Courier New',monospace; font-size:13px; color:var(--bone); letter-spacing:.03em;
+    margin-top:18px; max-width:68ch; text-align:center; line-height:1.65; min-height:17px; }
+  .jlb-count{ font-family:'Courier New',monospace; font-size:11px; letter-spacing:.26em; color:#7d8a80; margin-top:9px; }
+  .jlb-x{ position:absolute; top:22px; right:26px; }
+  .jlb-nav{ pointer-events:auto; cursor:pointer; position:absolute; top:50%; transform:translateY(-50%);
+    background:rgba(10,14,18,.5); color:var(--bone); border:1px solid rgba(230,225,211,.28);
+    font-family:Georgia, serif; font-size:30px; line-height:1; padding:10px 20px 14px; user-select:none;
+    transition:background .2s, color .2s, border-color .2s; }
+  .jlb-nav:hover{ background:rgba(159,216,255,.12); border-color:rgba(230,225,211,.6); color:#fff; }
+  .jlb-prev{ left:clamp(10px, 4vw, 60px); } .jlb-next{ right:clamp(10px, 4vw, 60px); }
 
   #pause-screen .pause-buttons{ margin-top:30px; display:flex; flex-direction:column; gap:11px; align-items:center; }
   #pause-screen .pause-meta{ margin-top:22px; font-family:'Courier New',monospace; font-size:11px;
@@ -270,6 +295,7 @@
         <div class="menu-actions">
           <button class="menu-btn" id="menu-continue">CONTINUE</button>
           <button class="menu-btn" id="menu-new">BEGIN</button>
+          <button class="menu-btn" id="menu-journal">JOURNAL</button>
         </div>
         <div id="menu-continue-info" class="menu-hint"></div>
       </div>
@@ -288,6 +314,17 @@
         <button class="menu-btn small" id="journal-back">BACK</button>
       </div>
       <div class="journal-body" id="journal-body"></div>
+    </div>
+
+    <div id="jlightbox">
+      <button class="menu-btn small jlb-x" id="jlb-close">CLOSE</button>
+      <button class="jlb-nav jlb-prev" id="jlb-prev" aria-label="Previous photograph">&lsaquo;</button>
+      <div class="jlb-frame">
+        <div class="jlb-photo"><img id="jlb-img" alt="" /></div>
+        <div class="jlb-cap" id="jlb-cap"></div>
+        <div class="jlb-count" id="jlb-count"></div>
+      </div>
+      <button class="jlb-nav jlb-next" id="jlb-next" aria-label="Next photograph">&rsaquo;</button>
     </div>
 
     <div id="pause-screen" class="screen">

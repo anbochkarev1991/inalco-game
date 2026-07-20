@@ -4,7 +4,7 @@
 // its own key so photos/notes survive a tab close even between checkpoints;
 // cleared on New Game.
 //
-// Photos are the 240x190 JPEG thumbnails main.js already produces (~10-20 KB
+// Photos are the 480x380 JPEG thumbnails main.js already produces (~25-50 KB
 // each as data URLs); capped so the whole album stays well inside localStorage.
 
 const KEY = 'inalco.journal';

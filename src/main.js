@@ -323,6 +323,10 @@ pauseBtn('pause-journal', () => openOverlay('journal'));
 pauseBtn('pause-restart', () => { saveCheckpoint(); save.clear(); journal.clear(); location.href = location.pathname + '?newgame'; });
 pauseBtn('pause-menu', () => { saveCheckpoint(); location.href = location.pathname + '?menu'; });
 
+// the journal is also reachable from the main menu; Back returns to whichever
+// screen is underneath (menu or pause) since openOverlay leaves it in place.
+document.getElementById('menu-journal')?.addEventListener('click', () => openOverlay('journal'));
+
 function openOverlay(which) {
   overlay = which;
   if (which === 'journal') journalUI.show();
@@ -705,7 +709,7 @@ function frame() {
     try {
       const src = renderer.domElement;
       const cv = document.createElement('canvas');
-      cv.width = 240; cv.height = 190;
+      cv.width = 480; cv.height = 380;   // 2x — the journal lightbox enlarges these
       const c2 = cv.getContext('2d');
       const s = Math.min(src.width / cv.width, src.height / cv.height) * 0.7;
       c2.drawImage(src,
