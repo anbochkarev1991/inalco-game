@@ -17,7 +17,14 @@ with an exact record of what it is, a Returned loses the argument with itself.
 
 Everything is procedural — no downloaded assets. Three.js + WebAudio.
 
-## Run it
+## ▶ Play
+
+**[Play in your browser →](https://anbochkarev1991.github.io/inalco-game/)**
+
+No install needed. Desktop browser + mouse/keyboard, headphones recommended.
+The build deploys automatically from `main` via GitHub Pages.
+
+## Run it locally
 
 ```bash
 npm install

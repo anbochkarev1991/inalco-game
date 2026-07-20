@@ -7,6 +7,9 @@ dist/
 # Test/harness output (regenerated locally)
 _screenshots/
 
+# Launch/press kit — kept local, published to itch.io separately
+press/
+
 # Local Claude Code settings
 .claude/settings.local.json
 

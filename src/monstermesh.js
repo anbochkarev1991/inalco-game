@@ -486,8 +486,8 @@ export async function preloadMonsterTextures() {
   };
   try {
     [skinTex.normal, skinTex.rough] = await Promise.all([
-      load('/assets/textures/skin_nor.jpg'),
-      load('/assets/textures/skin_rough.jpg'),
+      load('assets/textures/skin_nor.jpg'),
+      load('assets/textures/skin_rough.jpg'),
     ]);
   } catch {
     // offline or missing files: the canvas flesh texture carries the look
