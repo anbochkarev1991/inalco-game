@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>INALCO — Teaser</title>
+</head>
+<body>
+<style>
+  :root{
+    --void:#05070a;        /* glacial black ground */
+    --water:#2a3746;        /* fog-lit deep water */
+    --bone:#e6e2d6;         /* paper / subtitle bone */
+    --bone-dim:#9a978c;
+    --moss:#7f8f6a;         /* rare foliage green */
+    --flash:#ffffff;        /* the one bold accent: camera flash */
+    --serif:"Iowan Old Style",Georgia,"Times New Roman",serif;
+    --display:"Didot","Bodoni 72","Playfair Display",Georgia,"Times New Roman",serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#000;color:var(--bone);overflow:hidden;
+    font-family:var(--serif);-webkit-font-smoothing:antialiased}
+
+  /* ---- letterboxed cinematic stage ---- */
+  .wrap{position:fixed;inset:0;display:grid;place-items:center;background:#000}
+  .stage{position:relative;width:min(100vw,177.78vh);height:min(56.25vw,100vh);
+    background:#000;overflow:hidden;box-shadow:0 0 120px rgba(0,0,0,.9)}
+
+  #layers .layer{position:absolute;inset:0;background-size:cover;background-position:center;
+    opacity:0;will-change:opacity,transform}
+
+  /* film overlays */
+  .vignette{position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(120% 100% at 50% 44%,transparent 40%,rgba(0,0,0,.35) 74%,rgba(0,0,0,.85) 100%)}
+  .grain{position:absolute;inset:-40%;pointer-events:none;opacity:.06;mix-blend-mode:overlay;
+    background-image:var(--noise);background-size:180px 180px}
+  .grade{position:absolute;inset:0;pointer-events:none;mix-blend-mode:multiply;
+    background:linear-gradient(180deg,rgba(20,30,44,.35),rgba(5,7,10,.15) 45%,rgba(5,7,10,.6))}
+
+  /* caption — the game's literary subtitle voice */
+  .cap{position:absolute;left:8%;right:8%;bottom:8.5%;text-align:center;
+    font-style:italic;font-size:clamp(15px,2.5vw,30px);line-height:1.5;color:var(--bone);
+    text-shadow:0 2px 18px rgba(0,0,0,.95),0 0 2px rgba(0,0,0,.9);
+    opacity:0;letter-spacing:.005em}
+  .cap .who{display:block;font-style:normal;font-size:.52em;letter-spacing:.34em;
+    text-transform:uppercase;color:var(--bone-dim);margin-bottom:.7em}
+
+  /* camera-flash white-out — the accent, used only twice */
+  .flash{position:absolute;inset:0;background:var(--flash);opacity:0;pointer-events:none}
+
+  /* title card */
+  .title{position:absolute;inset:0;display:grid;place-content:center;text-align:center;
+    gap:.9rem;opacity:0;background:radial-gradient(80% 70% at 50% 50%,rgba(10,14,20,.2),#000 88%)}
+  .title h1{font-family:var(--display);font-weight:400;
+    font-size:clamp(46px,11vw,150px);letter-spacing:.22em;padding-left:.22em;
+    color:var(--bone);text-shadow:0 0 42px rgba(120,150,180,.28)}
+  .title .rule{width:min(60%,340px);height:1px;justify-self:center;
+    background:linear-gradient(90deg,transparent,var(--bone-dim),transparent);opacity:.7}
+  .title .tag{font-style:italic;font-size:clamp(15px,2.5vw,26px);color:var(--bone)}
+  .title .foot{font-family:var(--serif);font-style:normal;letter-spacing:.32em;
+    text-transform:uppercase;font-size:clamp(10px,1.3vw,13px);color:var(--bone-dim);margin-top:1rem}
+
+  /* thin progress line */
+  .prog{position:absolute;left:0;bottom:0;height:2px;width:0;background:var(--bone);opacity:.32}
+
+  /* start / replay gate */
+  .gate{position:absolute;inset:0;display:grid;place-content:center;gap:1.3rem;text-align:center;
+    background:radial-gradient(70% 60% at 50% 45%,rgba(15,20,28,.55),#000 92%);z-index:5}
+  .gate.hide{display:none}
+  .gate .k{font-family:var(--display);font-size:clamp(40px,10vw,120px);letter-spacing:.2em;padding-left:.2em}
+  .gate .sub{font-style:italic;color:var(--bone-dim);font-size:clamp(13px,2vw,20px)}
+  .btn{margin-top:.4rem;justify-self:center;cursor:pointer;background:transparent;
+    color:var(--bone);border:1px solid rgba(230,226,214,.5);
+    font-family:var(--serif);letter-spacing:.3em;text-transform:uppercase;
+    font-size:clamp(11px,1.5vw,15px);padding:.85em 2.1em;transition:all .3s ease}
+  .btn:hover,.btn:focus-visible{background:var(--bone);color:#05070a;outline:none}
+  .btn:focus-visible{box-shadow:0 0 0 3px rgba(230,226,214,.35)}
+  .replay{position:absolute;right:4%;bottom:6%;z-index:6;opacity:0;transition:opacity .6s;
+    font-size:clamp(10px,1.3vw,13px);padding:.7em 1.5em;pointer-events:none}
+  .replay.show{opacity:1;pointer-events:auto}
+  .muted{position:absolute;left:4%;bottom:6.5%;z-index:6;font-size:11px;letter-spacing:.24em;
+    text-transform:uppercase;color:var(--bone-dim);opacity:0;transition:opacity .6s}
+  .muted.show{opacity:.7}
+</style>
+
+<div class="wrap">
+  <div class="stage" id="stage">
+    <div id="layers"></div>
+    <div class="grade"></div>
+    <div class="grain" id="grain"></div>
+    <div class="vignette"></div>
+    <div class="cap" id="cap"></div>
+    <div class="title" id="title">
+      <h1>INALCO</h1>
+      <div class="rule"></div>
+      <div class="tag">the lake gives back what it takes</div>
+      <div class="foot">A survival-horror night · Play free in your browser</div>
+    </div>
+    <div class="flash" id="flash"></div>
+    <div class="prog" id="prog"></div>
+    <button class="btn replay" id="replay">↺ Replay</button>
+    <div class="muted" id="hud"></div>
+
+    <div class="gate" id="gate">
+      <div class="k">INALCO</div>
+      <div class="sub">the lake gives back what it takes</div>
+      <button class="btn" id="play">▶ Play teaser (with sound)</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var IMG = {
+    estancia:"__IMG_estancia__",
+    shore:"__IMG_shore__",
+    fire:"__IMG_fire__",
+    draft:"__IMG_draft__",
+    halfseen:"__IMG_halfseen__",
+    cellar:"__IMG_cellar__",
+    congregation:"__IMG_congregation__"
+  };
+
+  // procedural film-grain noise as an inline SVG data-uri
+  var noise = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")";
+  document.documentElement.style.setProperty('--noise', noise);
+
+  // ---- shot script (cut from in-game footage + captions) ----
+  var SHOTS = [
+    {img:null,           dur:4.5, cap:"The lake keeps what drowns."},
+    {img:'shore',        dur:6.0, cap:"And it gives it back."},
+    {img:'estancia',     dur:6.0, cap:"Nine days ago, my sister went into the water.", who:"ANA"},
+    {img:'fire',         dur:6.0, cap:"“You can’t stop them. You can disprove them.”", who:"RUFINO", ev:'fireOn'},
+    {img:'draft',        dur:5.0, cap:"That is <em>not</em> a hiker.", who:"ANA", ev:'cricketsCut'},
+    {img:'halfseen',     dur:4.0, cap:"One flash staggers them.", flash:true},
+    {img:'congregation', dur:4.0, cap:"Two disprove them.", flash:true, ev:'crack'},
+    {img:'cellar',       dur:6.0, cap:"Don’t answer. Whatever it says — don’t answer.", who:"ANA", ev:'namecall'},
+    {img:'shore',        dur:4.2, cap:"", dim:true, ev:'hush'},
+    {kind:'title',       dur:8.0}
+  ];
+  // seeded PRNG so Ken-Burns directions are fixed (deterministic capture)
+  var seed=20260720; function rnd(){ seed=(seed*1103515245+12345)&0x7fffffff; return seed/0x7fffffff; }
+  var t=0;
+  SHOTS.forEach(function(s){ s.start=t; t+=s.dur; s.kbx=(rnd()*2-1)*3; s.kby=(rnd()*2-1)*2.4; });
+  var TOTAL=t;
+  function evTime(tag){ for(var i=0;i<SHOTS.length;i++) if(SHOTS[i].ev===tag) return SHOTS[i].start; return -1; }
+  var titleStart = SHOTS[SHOTS.length-1].start;
+  var flashTimes = SHOTS.filter(function(s){return s.flash;}).map(function(s){return s.start;});
+
+  // ---- build stacked image layers (one per pictured shot) ----
+  var layersEl=document.getElementById('layers');
+  SHOTS.forEach(function(s,i){
+    if(s.kind==='title') { s.layer=null; return; }
+    var d=document.createElement('div'); d.className='layer';
+    if(s.img){ d.style.backgroundColor='#05070a'; d.style.backgroundImage='url('+IMG[s.img]+')'; }
+    else { d.style.backgroundColor='#05070a'; }
+    if(s.dim) d.dataset.dim='1';
+    layersEl.appendChild(d); s.layer=d;
+  });
+
+  var capEl=document.getElementById('cap'), titleEl=document.getElementById('title');
+  var flashEl=document.getElementById('flash'), progEl=document.getElementById('prog'), grainEl=document.getElementById('grain');
+  var gate=document.getElementById('gate'), playBtn=document.getElementById('play');
+  var replay=document.getElementById('replay'), hud=document.getElementById('hud');
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function clamp(x,a,b){ return x<a?a:x>b?b:x; }
+  function ease(x){ return 1-Math.pow(1-x,3); }
+
+  var capIdx=-1;
+  // ---- pure per-frame visual render ----
+  function renderVisual(tt){
+    // image layers: opacity + ken-burns
+    for(var i=0;i<SHOTS.length;i++){
+      var s=SHOTS[i]; if(!s.layer) continue;
+      var lt=tt-s.start, op=0;
+      if(lt>=0){ var fd=s.flash?0.06:0.9; op=clamp(lt/fd,0,1); }
+      s.layer.style.opacity=op;
+      if(op>0){
+        var p=clamp(lt/(s.dur+2),0,1), sc=1.05+0.10*ease(p);
+        s.layer.style.transform='scale('+sc+') translate('+(s.kbx*p)+'%,'+(s.kby*p)+'%)';
+        s.layer.style.filter=s.dim?'brightness(.5) saturate(.75)':'none';
+      }
+    }
+    // title
+    titleEl.style.opacity = tt>=titleStart ? clamp((tt-titleStart)/1.4,0,1) : 0;
+    // active shot for caption = last started, non-title
+    var act=-1;
+    for(var j=0;j<SHOTS.length;j++){ if(SHOTS[j].kind!=='title' && tt>=SHOTS[j].start) act=j; }
+    if(act>=0){
+      var s2=SHOTS[act], lt2=tt-s2.start;
+      if(act!==capIdx){
+        capEl.innerHTML=(s2.cap? (s2.who?'<span class="who">'+s2.who+'</span>':'')+s2.cap : '');
+        capIdx=act;
+      }
+      if(!s2.cap){ capEl.style.opacity=0; }
+      else{
+        var delay=s2.flash?0.15:0.35;
+        var inO=clamp((lt2-delay)/0.6,0,1);
+        var outO=clamp((s2.dur-0.15-lt2)/0.5,0,1);
+        capEl.style.opacity=Math.min(inO,outO);
+      }
+    } else capEl.style.opacity=0;
+    // flash spikes
+    var fl=0;
+    for(var k=0;k<flashTimes.length;k++){
+      var dt=tt-flashTimes[k];
+      if(dt>=0 && dt<0.6){ fl=Math.max(fl, dt<0.03 ? dt/0.03 : clamp(1-(dt-0.03)/0.5,0,1)); }
+    }
+    flashEl.style.opacity=fl;
+    // progress + grain flicker (deterministic)
+    progEl.style.width=clamp(tt/TOTAL,0,1)*100+'%';
+    if(!reduce){ var g=Math.floor(tt*20); grainEl.style.backgroundPosition=((g*137)%180)+'px '+((g*89)%180)+'px'; }
+  }
+
+  // ---------- audio (schedulable at absolute times; live + offline) ----------
+  function scheduleAudio(ctx, base){
+    var master=ctx.createGain(); master.gain.value=0.9; master.connect(ctx.destination);
+    var END=base+TOTAL;
+    function noiseSrc(){
+      var b=ctx.createBuffer(1, Math.floor(ctx.sampleRate*2), ctx.sampleRate);
+      var d=b.getChannelData(0); for(var i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+      var s=ctx.createBufferSource(); s.buffer=b; s.loop=true; s.start(base); s.stop(END+0.3); return s;
+    }
+    // D-minor drone through a swaying lowpass
+    var lp=ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=520; lp.Q.value=0.6;
+    var dg=ctx.createGain(); dg.gain.setValueAtTime(0.0001,base); dg.connect(lp); lp.connect(master);
+    [73.42,110.0,146.83,174.61].forEach(function(f,i){
+      var o=ctx.createOscillator(); o.type=i<2?'sine':'triangle'; o.frequency.value=f;
+      var og=ctx.createGain(); og.gain.value=(i===0?0.5:i===1?0.32:0.2); o.detune.value=(i-1.5)*4;
+      o.connect(og); og.connect(dg); o.start(base); o.stop(END+0.3);
+    });
+    var lfo=ctx.createOscillator(); lfo.frequency.value=0.06; var lfg=ctx.createGain(); lfg.gain.value=140;
+    lfo.connect(lfg); lfg.connect(lp.frequency); lfo.start(base); lfo.stop(END+0.3);
+    dg.gain.setTargetAtTime(0.11, base, 2.2);
+    var hushT=evTime('hush'); if(hushT>=0) dg.gain.setTargetAtTime(0.05, base+hushT, 0.6);
+    dg.gain.setTargetAtTime(0.16, base+titleStart, 2.5); // swell
+
+    // radio static
+    var hg=ctx.createGain(); hg.gain.setValueAtTime(0.0001,base);
+    var bp=ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1400; bp.Q.value=0.5;
+    noiseSrc().connect(bp); bp.connect(hg); hg.connect(master);
+    hg.gain.setTargetAtTime(0.09, base, 1.4);
+    if(hushT>=0) hg.gain.setTargetAtTime(0.0001, base+hushT, 0.4);
+
+    // crickets, cut at the Draft
+    var cg=ctx.createGain(); cg.gain.setValueAtTime(0.0001,base);
+    var hp=ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=5200;
+    noiseSrc().connect(hp); hp.connect(cg); cg.connect(master);
+    cg.gain.setTargetAtTime(0.05, base+3, 2);
+    var crk=evTime('cricketsCut'); if(crk>=0) cg.gain.setTargetAtTime(0.0001, base+crk, 0.08);
+
+    // one-shots
+    function shutter(at){
+      var o=ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(120,at);
+      o.frequency.exponentialRampToValueAtTime(46,at+0.18);
+      var g=ctx.createGain(); g.gain.setValueAtTime(0.55,at); g.gain.exponentialRampToValueAtTime(0.001,at+0.22);
+      o.connect(g); g.connect(master); o.start(at); o.stop(at+0.24);
+      [0,0.085].forEach(function(off){
+        var n=ctx.createBufferSource(); var b=ctx.createBuffer(1,Math.floor(ctx.sampleRate*0.04),ctx.sampleRate);
+        var dd=b.getChannelData(0); for(var i=0;i<dd.length;i++) dd[i]=(Math.random()*2-1)*(1-i/dd.length);
+        n.buffer=b; var f=ctx.createBiquadFilter(); f.type='highpass'; f.frequency.value=2600;
+        var g2=ctx.createGain(); g2.gain.value=0.5; n.connect(f); f.connect(g2); g2.connect(master); n.start(at+off); n.stop(at+off+0.05);
+      });
+    }
+    function whine(at,lead){
+      var o=ctx.createOscillator(); o.type='sawtooth';
+      o.frequency.setValueAtTime(420,at); o.frequency.exponentialRampToValueAtTime(1750,at+lead);
+      var f=ctx.createBiquadFilter(); f.type='bandpass'; f.frequency.value=1600; f.Q.value=6;
+      var g=ctx.createGain(); g.gain.setValueAtTime(0.0001,at);
+      g.gain.exponentialRampToValueAtTime(0.08,at+lead*0.9); g.gain.exponentialRampToValueAtTime(0.0001,at+lead+0.15);
+      o.connect(f); f.connect(g); g.connect(master); o.start(at); o.stop(at+lead+0.2);
+    }
+    function crack(at){
+      var n=ctx.createBufferSource(); var b=ctx.createBuffer(1,Math.floor(ctx.sampleRate*0.3),ctx.sampleRate);
+      var d=b.getChannelData(0); for(var i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2);
+      n.buffer=b; var f=ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=900;
+      var g=ctx.createGain(); g.gain.value=0.6; n.connect(f); f.connect(g); g.connect(master); n.start(at); n.stop(at+0.3);
+    }
+    function nameCall(at){
+      [[330,0],[262,0.5]].forEach(function(p){
+        var o=ctx.createOscillator(); o.type='sine'; o.frequency.value=p[0];
+        var vib=ctx.createOscillator(); vib.frequency.value=5.5; var vg=ctx.createGain(); vg.gain.value=6;
+        vib.connect(vg); vg.connect(o.frequency); vib.start(at+p[1]); vib.stop(at+p[1]+0.55);
+        var g=ctx.createGain(); g.gain.setValueAtTime(0.0001,at+p[1]);
+        g.gain.linearRampToValueAtTime(0.14,at+p[1]+0.12); g.gain.exponentialRampToValueAtTime(0.0001,at+p[1]+0.5);
+        o.connect(g); g.connect(master); o.start(at+p[1]); o.stop(at+p[1]+0.55);
+      });
+    }
+    flashTimes.forEach(function(ft){ whine(base+ft-1.5,1.5); shutter(base+ft); });
+    var ct=evTime('crack'); if(ct>=0) crack(base+ct+0.12);
+    var nt=evTime('namecall'); if(nt>=0) nameCall(base+nt+0.7);
+  }
+
+  // ---------- offline audio → WAV base64 (for the MP4 render) ----------
+  window.__renderAudioWav = function(){
+    var sr=44100, len=Math.ceil((TOTAL+0.4)*sr);
+    var OAC=window.OfflineAudioContext||window.webkitOfflineAudioContext;
+    var oc=new OAC(2, len, sr);
+    scheduleAudio(oc, 0);
+    return oc.startRendering().then(function(buf){ return wavBase64(buf); });
+  };
+  function wavBase64(buf){
+    var nc=buf.numberOfChannels, sr=buf.sampleRate, n=buf.length;
+    var out=new DataView(new ArrayBuffer(44+n*nc*2)); var p=0;
+    function s(str){ for(var i=0;i<str.length;i++) out.setUint8(p++,str.charCodeAt(i)); }
+    function u32(v){ out.setUint32(p,v,true); p+=4; } function u16(v){ out.setUint16(p,v,true); p+=2; }
+    s('RIFF'); u32(36+n*nc*2); s('WAVE'); s('fmt '); u32(16); u16(1); u16(nc); u32(sr); u32(sr*nc*2); u16(nc*2); u16(16); s('data'); u32(n*nc*2);
+    var chans=[]; for(var c=0;c<nc;c++) chans.push(buf.getChannelData(c));
+    for(var i=0;i<n;i++) for(var c2=0;c2<nc;c2++){ var v=Math.max(-1,Math.min(1,chans[c2][i])); out.setInt16(p, v<0?v*0x8000:v*0x7fff, true); p+=2; }
+    var bytes=new Uint8Array(out.buffer), bin=''; for(var k=0;k<bytes.length;k++) bin+=String.fromCharCode(bytes[k]);
+    return btoa(bin);
+  }
+
+  // ---------- capture hooks (deterministic offline frame render) ----------
+  var isCapture = /[?&]capture/.test(location.search);
+  window.__teaser = { total: TOTAL, fps: 30, seek: function(tt){ renderVisual(tt); }, ready: null };
+  // preload/decode images so screenshots are deterministic
+  var ready = Promise.all(Object.keys(IMG).map(function(k){
+    return new Promise(function(res){ var im=new Image(); im.onload=im.onerror=res; im.src=IMG[k]; });
+  }));
+  window.__teaser.ready = ready;
+
+  // ---------- live playback ----------
+  var actx, raf=0, startT=0;
+  function loop(now){
+    var tt=(now-startT)/1000;
+    renderVisual(Math.min(tt,TOTAL));
+    if(tt<TOTAL) raf=requestAnimationFrame(loop);
+    else { replay.classList.add('show'); hud.classList.add('show'); hud.textContent='Screen-record to export'; }
+  }
+  function begin(){
+    gate.classList.add('hide'); replay.classList.remove('show'); hud.classList.remove('show');
+    capIdx=-1;
+    try{
+      if(!actx) actx=new (window.AudioContext||window.webkitAudioContext)();
+      if(actx.state==='suspended') actx.resume();
+      scheduleAudio(actx, actx.currentTime+0.06);
+    }catch(e){}
+    startT=performance.now()+60; cancelAnimationFrame(raf); raf=requestAnimationFrame(loop);
+  }
+  playBtn.addEventListener('click', begin);
+  replay.addEventListener('click', begin);
+
+  if(isCapture){ gate.classList.add('hide'); renderVisual(0); }
+})();
+</script>
+</body>
+</html>

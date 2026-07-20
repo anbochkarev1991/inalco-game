@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>INALCO — the lake gives back what it takes</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8C%AB%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+<style>
+  :root{
+    --bone:#e6e1d3; --bone-dim:#b9b3a4; --ink:#26211a; --paper:#e9e2cf;
+    --red:#b13a2e; --cyan:#9fd8ff;
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ width:100%; height:100%; background:#05070a; overflow:hidden; }
+  body{ font-family: Georgia, 'Times New Roman', serif; color:var(--bone);
+        -webkit-font-smoothing:antialiased; cursor:default; }
+  canvas{ display:block; }
+  #app{ position:fixed; inset:0; }
+
+  #ui{ position:fixed; inset:0; pointer-events:none; z-index:10; }
+  #ui > *{ pointer-events:none; }
+
+  /* ---------- HUD ---------- */
+  #hud{ position:absolute; top:22px; left:26px; opacity:0; transition:opacity 1.2s; }
+  #hud.on{ opacity:1; }
+  #objective-es{ font-size:15px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--bone); text-shadow:0 1px 6px rgba(0,0,0,.9); }
+  #objective-en{ font-size:11.5px; letter-spacing:.12em; color:var(--bone-dim);
+    font-style:italic; margin-top:3px; text-shadow:0 1px 6px rgba(0,0,0,.9); }
+  #evidence{ margin-top:10px; font-family:'Courier New',monospace; font-size:12px;
+    letter-spacing:.2em; color:var(--bone-dim); text-shadow:0 1px 6px rgba(0,0,0,.9); }
+  #evidence b{ color:var(--bone); }
+  #objective-side{ margin-top:7px; font-family:'Courier New',monospace; font-size:11px;
+    letter-spacing:.12em; color:#7d8a80; text-shadow:0 1px 6px rgba(0,0,0,.9); }
+
+  #flashpip{ position:absolute; right:28px; bottom:24px; font-family:'Courier New',monospace;
+    font-size:12px; letter-spacing:.22em; color:#5c584c; text-shadow:0 1px 6px #000;
+    transition:color .4s; opacity:0; }
+  #flashpip.on{ opacity:1; }
+  #flashpip.ready{ color:var(--bone); }
+
+  #prompt{ position:absolute; left:50%; bottom:19%; transform:translateX(-50%);
+    font-family:'Courier New',monospace; font-size:14px; letter-spacing:.14em;
+    color:var(--bone); text-shadow:0 1px 8px #000; opacity:0; transition:opacity .15s;
+    background:rgba(5,8,10,.35); padding:6px 14px; border:1px solid rgba(230,225,211,.18); }
+  #prompt.on{ opacity:1; }
+
+  #subtitle{ position:absolute; left:50%; bottom:9%; transform:translateX(-50%);
+    width:min(760px, 86vw); text-align:center; font-size:19px; font-style:italic;
+    letter-spacing:.02em; line-height:1.45; color:var(--bone);
+    text-shadow:0 2px 10px rgba(0,0,0,.95), 0 0 2px #000; opacity:0; transition:opacity .35s; }
+  #subtitle.on{ opacity:1; }
+  #subtitle .who{ font-style:normal; font-size:12px; letter-spacing:.28em; color:var(--bone-dim);
+    display:block; margin-bottom:4px; }
+
+  /* ---------- Note overlay ---------- */
+  #note{ position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+    background:rgba(3,5,7,.72); }
+  #note.on{ display:flex; }
+  #note-paper{ width:min(590px, 90vw); max-height:78vh; overflow-y:auto;
+    background:linear-gradient(173deg,#efe8d4 0%, #e4dcc4 60%, #d8cfb2 100%);
+    color:var(--ink); padding:38px 44px 30px; transform:rotate(-.5deg);
+    box-shadow:0 30px 80px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.4);
+    font-family:'Courier New',monospace; }
+  #note-kind{ font-size:10.5px; letter-spacing:.34em; color:#8a4b2f; margin-bottom:10px; }
+  #note-title{ font-size:17px; font-weight:700; letter-spacing:.06em; margin-bottom:16px;
+    border-bottom:1px solid rgba(38,33,26,.35); padding-bottom:10px; }
+  #note-body{ font-size:14px; line-height:1.75; white-space:pre-wrap; }
+  #note-hint{ margin-top:22px; font-size:11px; letter-spacing:.2em; color:#7a7057; }
+
+  /* ---------- Dialog ---------- */
+  #dialog{ position:absolute; left:50%; bottom:7%; transform:translateX(-50%);
+    width:min(720px, 92vw); background:rgba(6,9,12,.88);
+    border:1px solid rgba(230,225,211,.22); box-shadow:0 24px 70px rgba(0,0,0,.8);
+    padding:20px 26px 16px; display:none; }
+  #dialog.on{ display:block; }
+  #dialog-who{ font-size:12px; letter-spacing:.3em; color:#c8a06a; margin-bottom:9px;
+    font-family:'Courier New',monospace; }
+  #dialog-text{ font-size:16.5px; line-height:1.6; color:var(--bone); min-height:52px;
+    font-style:italic; }
+  #dialog-choices{ margin-top:14px; font-family:'Courier New',monospace; font-size:13.5px;
+    line-height:2.05; }
+  #dialog-choices .ch{ color:var(--bone-dim); cursor:pointer; }
+  #dialog-choices .ch:hover, #dialog-choices .ch.sel{ color:var(--bone); }
+  #dialog-choices .ch b{ color:#c8a06a; font-weight:400; }
+  #dialog-hint{ margin-top:10px; font-family:'Courier New',monospace; font-size:10.5px;
+    letter-spacing:.22em; color:#5c6660; }
+
+  /* ---------- Polaroid ---------- */
+  #polaroid{ position:absolute; right:30px; bottom:64px; width:210px; background:#f2efe6;
+    padding:10px 10px 12px; box-shadow:0 18px 50px rgba(0,0,0,.8);
+    transform:translateX(130%) rotate(4deg); transition:transform .55s cubic-bezier(.2,.9,.25,1.1); }
+  #polaroid.on{ transform:translateX(0) rotate(3deg); }
+  #polaroid img{ width:100%; display:block; filter:contrast(1.08) saturate(.7) blur(.4px); }
+  #polaroid .cap{ font-family:'Courier New',monospace; font-size:10.5px; color:#33302a;
+    margin-top:9px; line-height:1.5; }
+
+  /* ---------- Full screens ---------- */
+  .screen{ position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+    flex-direction:column; text-align:center; background:#04060a; }
+  .screen.on{ display:flex; }
+
+  #title-screen{ background:radial-gradient(120% 90% at 50% 110%, #0d1822 0%, #05080c 55%, #030407 100%); }
+  #title-screen .fog-layer{ position:absolute; inset:-20%;
+    background:
+      radial-gradient(45% 30% at 30% 60%, rgba(120,150,165,.10), transparent 70%),
+      radial-gradient(50% 34% at 72% 44%, rgba(110,140,160,.08), transparent 70%),
+      radial-gradient(38% 26% at 55% 75%, rgba(130,160,175,.07), transparent 70%);
+    animation:fogdrift 26s ease-in-out infinite alternate; }
+  @keyframes fogdrift{ from{ transform:translateX(-3%) translateY(1%);} to{ transform:translateX(3%) translateY(-2%);} }
+  #title-name{ font-size:min(15vw, 118px); letter-spacing:.34em; text-indent:.34em; font-weight:400;
+    color:#dfe6e4; text-shadow:0 0 34px rgba(159,216,255,.25), 0 4px 30px #000;
+    animation:titleflicker 7s infinite; position:relative; }
+  @keyframes titleflicker{
+    0%,90.5%,92.5%,100%{ opacity:1; } 91%{ opacity:.55;} 92%{ opacity:.85;}
+    50.2%{ opacity:.94;} }
+  #title-sub{ margin-top:14px; font-style:italic; font-size:15px; color:var(--bone-dim);
+    letter-spacing:.18em; position:relative; }
+  #title-place{ margin-top:5px; font-family:'Courier New',monospace; font-size:11px;
+    letter-spacing:.3em; color:#5f6b6e; position:relative; }
+  #title-start{ margin-top:64px; font-family:'Courier New',monospace; font-size:13px;
+    letter-spacing:.3em; color:var(--bone); animation:pulse 2.4s infinite; position:relative; }
+  @keyframes pulse{ 0%,100%{opacity:.25;} 50%{opacity:1;} }
+  #title-controls{ position:absolute; bottom:34px; width:100%; text-align:center;
+    font-family:'Courier New',monospace; font-size:11px; letter-spacing:.16em; color:#55606a;
+    line-height:2; }
+  #title-warn{ position:absolute; top:26px; width:100%; text-align:center;
+    font-family:'Courier New',monospace; font-size:10px; letter-spacing:.24em; color:#4a545c; }
+
+  #pause-screen{ background:rgba(4,6,10,.82); }
+  #pause-screen h2{ font-size:34px; letter-spacing:.4em; text-indent:.4em; font-weight:400; }
+  #pause-screen .small{ margin-top:26px; font-family:'Courier New',monospace; font-size:12px;
+    letter-spacing:.2em; color:var(--bone-dim); line-height:2.1; }
+
+  #death-screen{ background:#e8e4da; color:#1c1a16; }
+  #death-screen h2{ font-size:24px; letter-spacing:.3em; text-indent:.3em; font-weight:400; color:#1c1a16; }
+  #death-screen .line{ margin-top:18px; font-family:'Courier New',monospace; font-size:13.5px;
+    color:#4a443a; width:min(560px,84vw); line-height:1.8; }
+  #death-screen .cont{ margin-top:46px; font-family:'Courier New',monospace; font-size:12px;
+    letter-spacing:.26em; color:#7a7264; animation:pulse 2.2s infinite; }
+
+  #end-screen{ background:#020304; }
+  #end-text{ width:min(680px, 86vw); font-family:'Courier New',monospace; font-size:15px;
+    line-height:2.05; color:var(--bone); text-align:left; white-space:pre-wrap; }
+  #end-title{ margin-top:44px; font-size:44px; letter-spacing:.4em; text-indent:.4em;
+    color:#dfe6e4; opacity:0; transition:opacity 3s; }
+  #end-title.on{ opacity:1; }
+  #end-hint{ margin-top:30px; font-family:'Courier New',monospace; font-size:11px;
+    letter-spacing:.26em; color:#5f6b6e; opacity:0; transition:opacity 2s; }
+  #end-hint.on{ opacity:1; }
+
+  #fader{ position:absolute; inset:0; background:#000; opacity:1; transition:opacity 1.6s; }
+  #fader.clear{ opacity:0; }
+  #fader.white{ background:#e8e6df; }
+
+  /* ---------- Menu / Options / Journal (shared) ---------- */
+  .menu-btn{ pointer-events:auto; cursor:pointer; background:rgba(10,14,18,.5);
+    color:var(--bone); font-family:'Courier New',monospace; font-size:13px;
+    letter-spacing:.22em; padding:12px 26px; border:1px solid rgba(230,225,211,.28);
+    transition:background .2s, color .2s, border-color .2s; text-transform:uppercase;
+    min-width:210px; }
+  .menu-btn:hover{ background:rgba(159,216,255,.10); border-color:rgba(230,225,211,.6);
+    color:#fff; }
+  .menu-btn.small{ min-width:0; padding:9px 18px; font-size:11px; }
+
+  #menu-screen{ background:radial-gradient(120% 90% at 50% 110%, #0d1822 0%, #05080c 55%, #030407 100%); }
+  #menu-screen .fog-layer{ position:absolute; inset:-20%;
+    background:
+      radial-gradient(45% 30% at 30% 60%, rgba(120,150,165,.10), transparent 70%),
+      radial-gradient(50% 34% at 72% 44%, rgba(110,140,160,.08), transparent 70%);
+    animation:fogdrift 26s ease-in-out infinite alternate; }
+  .menu-wordmark{ font-size:min(11vw, 84px); letter-spacing:.34em; text-indent:.34em;
+    color:#dfe6e4; text-shadow:0 0 30px rgba(159,216,255,.22), 0 4px 26px #000;
+    position:relative; margin-bottom:6px; }
+  .menu-tagline{ font-style:italic; font-size:13.5px; color:var(--bone-dim);
+    letter-spacing:.16em; margin-bottom:5px; position:relative; }
+  .menu-place{ font-family:'Courier New',monospace; font-size:11px; letter-spacing:.3em;
+    color:#5f6b6e; margin-bottom:40px; position:relative; }
+  .menu-panel{ position:relative; display:flex; flex-direction:column; align-items:center; gap:16px; }
+  .menu-actions{ display:flex; flex-direction:column; gap:11px; align-items:center; }
+  .menu-hint{ font-family:'Courier New',monospace; font-size:10.5px; letter-spacing:.14em;
+    color:#7d8a80; min-height:14px; margin-top:2px; font-style:italic; }
+  .menu-controls{ position:absolute; bottom:30px; width:100%; text-align:center;
+    font-family:'Courier New',monospace; font-size:11px; letter-spacing:.16em; color:#55606a;
+    line-height:2; }
+
+  #journal-screen{ background:rgba(4,6,10,.94); }
+
+  .journal-head{ position:absolute; top:26px; left:0; width:100%; display:flex;
+    justify-content:space-between; align-items:center; padding:0 34px; }
+  .journal-tabs{ display:flex; gap:6px; }
+  .jtab{ pointer-events:auto; cursor:pointer; background:transparent; color:#7d8a80;
+    font-family:'Courier New',monospace; font-size:12px; letter-spacing:.24em; padding:8px 18px;
+    border:1px solid transparent; border-bottom-color:rgba(230,225,211,.2); }
+  .jtab.on{ color:var(--bone); border-color:rgba(230,225,211,.3); background:rgba(159,216,255,.06); }
+  #journal-back{ margin-top:0; }
+  .journal-body{ position:relative; width:min(860px,92vw); max-height:74vh; overflow-y:auto;
+    margin-top:56px; padding:6px; }
+  .jempty{ font-style:italic; color:var(--bone-dim); font-size:15px; text-align:center; padding:60px 20px; }
+  .jphotos{ display:grid; grid-template-columns:repeat(auto-fill, minmax(180px,1fr)); gap:18px; }
+  .jphoto{ background:#f2efe6; padding:8px 8px 10px; box-shadow:0 12px 34px rgba(0,0,0,.7); transform:rotate(-.6deg); }
+  .jphoto:nth-child(even){ transform:rotate(.7deg); }
+  .jphoto img{ width:100%; display:block; filter:contrast(1.08) saturate(.7); }
+  .jphoto figcaption{ font-family:'Courier New',monospace; font-size:10px; color:#33302a; margin-top:7px; line-height:1.5; }
+  .jnotes{ display:flex; flex-direction:column; gap:16px; }
+  .jnote{ background:rgba(233,226,207,.94); color:var(--ink); padding:18px 22px;
+    font-family:'Courier New',monospace; text-align:left; box-shadow:0 10px 28px rgba(0,0,0,.6); }
+  .jnote-kind{ font-size:9.5px; letter-spacing:.3em; color:#8a4b2f; margin-bottom:7px; }
+  .jnote-title{ font-size:14px; font-weight:700; letter-spacing:.05em; margin-bottom:10px; }
+  .jnote-body{ font-size:12.5px; line-height:1.7; white-space:pre-wrap; }
+
+  #pause-screen .pause-buttons{ margin-top:30px; display:flex; flex-direction:column; gap:11px; align-items:center; }
+  #pause-screen .pause-meta{ margin-top:22px; font-family:'Courier New',monospace; font-size:11px;
+    letter-spacing:.18em; color:#7d8a80; }
+  #pause-screen .pause-meta b{ color:var(--bone); font-weight:400; }
+
+  ::-webkit-scrollbar{ width:8px; } ::-webkit-scrollbar-thumb{ background:#8a8264; }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="ui">
+    <div id="hud">
+      <div id="objective-es"></div>
+      <div id="objective-en"></div>
+      <div id="evidence"></div>
+      <div id="objective-side"></div>
+    </div>
+    <div id="flashpip">FLASH ◉</div>
+    <div id="prompt"></div>
+    <div id="subtitle"></div>
+
+    <div id="note">
+      <div id="note-paper">
+        <div id="note-kind"></div>
+        <div id="note-title"></div>
+        <div id="note-body"></div>
+        <div id="note-hint">[E] CLOSE</div>
+      </div>
+    </div>
+
+    <div id="polaroid"><img alt="" /><div class="cap"></div></div>
+
+    <div id="dialog">
+      <div id="dialog-who"></div>
+      <div id="dialog-text"></div>
+      <div id="dialog-choices"></div>
+      <div id="dialog-hint"></div>
+    </div>
+
+    <div id="title-screen" class="screen on">
+      <div id="title-warn">HEADPHONES RECOMMENDED</div>
+      <div class="fog-layer"></div>
+      <div id="title-name">INALCO</div>
+      <div id="title-sub">the lake gives back what it takes</div>
+      <div id="title-place">LAKE NAHUEL HUAPI · VERY FAR FROM EVERYTHING</div>
+      <div id="title-start">CLICK TO BEGIN</div>
+      <div id="title-controls">
+        WASD MOVE &nbsp;·&nbsp; MOUSE LOOK &nbsp;·&nbsp; SHIFT RUN &nbsp;·&nbsp; E INTERACT<br/>
+        F FLASHLIGHT &nbsp;·&nbsp; LEFT CLICK CAMERA FLASH &nbsp;·&nbsp; ESC PAUSE
+      </div>
+    </div>
+
+    <div id="menu-screen" class="screen">
+      <div class="fog-layer"></div>
+      <div class="menu-wordmark">INALCO</div>
+      <div class="menu-tagline">the lake gives back what it takes</div>
+      <div class="menu-place">LAKE NAHUEL HUAPI · VERY FAR FROM EVERYTHING</div>
+      <div class="menu-panel">
+        <div class="menu-actions">
+          <button class="menu-btn" id="menu-continue">CONTINUE</button>
+          <button class="menu-btn" id="menu-new">BEGIN</button>
+        </div>
+        <div id="menu-continue-info" class="menu-hint"></div>
+      </div>
+      <div class="menu-controls">
+        WASD MOVE &nbsp;·&nbsp; MOUSE LOOK &nbsp;·&nbsp; SHIFT RUN &nbsp;·&nbsp; E INTERACT<br/>
+        F FLASHLIGHT &nbsp;·&nbsp; LEFT CLICK CAMERA FLASH &nbsp;·&nbsp; ESC PAUSE
+      </div>
+    </div>
+
+    <div id="journal-screen" class="screen">
+      <div class="journal-head">
+        <div class="journal-tabs">
+          <button class="jtab on" data-tab="photos">PHOTOGRAPHS</button>
+          <button class="jtab" data-tab="notes">NOTES</button>
+        </div>
+        <button class="menu-btn small" id="journal-back">BACK</button>
+      </div>
+      <div class="journal-body" id="journal-body"></div>
+    </div>
+
+    <div id="pause-screen" class="screen">
+      <h2>PAUSED</h2>
+      <div class="pause-buttons">
+        <button class="menu-btn" id="pause-resume">RESUME</button>
+        <button class="menu-btn" id="pause-journal">JOURNAL</button>
+        <button class="menu-btn" id="pause-restart">RESTART NIGHT</button>
+        <button class="menu-btn" id="pause-menu">MAIN MENU</button>
+      </div>
+      <div class="pause-meta"><span id="pause-obj"></span></div>
+      <div class="small" style="margin-top:14px; color:#55606a;">click anywhere to resume</div>
+    </div>
+
+    <div id="death-screen" class="screen">
+      <h2>THE FOG CLOSES</h2>
+      <div class="line"></div>
+      <div class="cont">[E] GET UP</div>
+    </div>
+
+    <div id="end-screen" class="screen">
+      <div id="end-text"></div>
+      <div id="end-title">INALCO</div>
+      <div id="end-hint">[R] RESTART</div>
+    </div>
+
+    <div id="fader"></div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

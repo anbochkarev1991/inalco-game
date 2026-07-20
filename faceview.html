@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>face viewer</title>
+  <style>html,body{margin:0;height:100%;background:#3a3d42;overflow:hidden}</style>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { makeHead } from './src/npc/face.js';
+
+// Neutral studio setup — NO torch, NO fog, so we judge the SHAPE of the head
+// and whether nose/mouth read as separate features. ?angle=front|34|profile,
+// ?beard=0|1 (default 0 → bare face so the mouth is visible), ?who=all|<id>.
+const q = new URLSearchParams(location.search);
+const ANGLE = q.get('angle') || 'front';
+const SHOW_BEARD = q.get('beard') === '1';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(1200, 520);
+renderer.setPixelRatio(1);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x3a3d42);
+const camera = new THREE.PerspectiveCamera(30, 1200 / 520, 0.01, 10);
+
+// Lighting mimics the GAME: a mostly frontal key (like the player's torch) so
+// the lower face isn't buried in a top-down shadow, plus soft fill + rim so form
+// still reads. ?studio=1 switches to a higher key to inspect pure geometry.
+const STUDIO = q.get('studio') === '1';
+scene.add(new THREE.HemisphereLight(0xd8e0ea, 0x2a2620, 0.7));
+const key = new THREE.DirectionalLight(0xfff2e2, 1.6);
+key.position.set(0.3, STUDIO ? 1.0 : 0.45, 1.35); scene.add(key);
+const front = new THREE.DirectionalLight(0xfff4e6, 0.7); front.position.set(0, 0.12, 1.6); scene.add(front); // torch
+const fill = new THREE.DirectionalLight(0xbfd0e0, 0.5); fill.position.set(-1.0, 0.15, 0.7); scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffffff, 0.5); rim.position.set(0, 0.4, -1.2); scene.add(rim);
+
+// three characters — bare faces (no beard) by default so the mouth is visible
+const CHARS = [
+  { id: 'mara',   skinTone: '#c99a76', age: 0.25, iris: '#4a3324', hair: 0x241a12, beard: null, ruddy: 0.08,
+    shape: { faceLength: 1.02, jawWidth: 0.88, browHeavy: 0.75, noseLen: 0.9 } },
+  { id: 'rufino', skinTone: '#b07a56', age: 0.72, iris: '#4a3423', hair: 0x615a52, beard: SHOW_BEARD ? 'beardFull' : null, ruddy: 0.85,
+    shape: { faceLength: 0.98, jawWidth: 1.22, browHeavy: 1.25, noseLen: 1.08 } },
+  { id: 'eliseo', skinTone: '#c2a184', age: 0.95, iris: '#574f43', hair: 0xcfc7b6, beard: SHOW_BEARD ? 'beardFull' : null, ruddy: 0.4,
+    shape: { faceLength: 1.09, jawWidth: 0.9, browHeavy: 1.15, cheekGaunt: 0.85, noseLen: 1.05 } },
+];
+
+const xs = [-0.34, 0, 0.34];
+CHARS.forEach((c, i) => {
+  const { head } = makeHead({
+    skinTone: c.skinTone, beard: c.beard, age: c.age, iris: c.iris, hair: c.hair,
+    neckLen: 0.12, hairStyle: 'scalp', shape: c.shape || {}, ruddy: c.ruddy,
+  });
+  head.position.set(xs[i], 0, 0);
+  const yaw = ANGLE === 'profile' ? Math.PI / 2 : ANGLE === '34' ? Math.PI * 0.28 : 0;
+  head.rotation.y = yaw;
+  scene.add(head);
+});
+
+// frame the row of heads
+camera.position.set(0, 0.02, 1.15);
+camera.lookAt(0, 0.0, 0);
+
+function render() { renderer.render(scene, camera); }
+// render a few frames so async CC0 maps (if any) settle, then flag ready
+let n = 0;
+(function loop() { render(); if (++n < 30) requestAnimationFrame(loop); else { window.__faceReady = true; } })();
+</script>
+</body>
+</html>

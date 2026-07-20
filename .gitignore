@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Test/harness output (regenerated locally)
+_screenshots/
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# OS files
+.DS_Store
+**/.DS_Store
