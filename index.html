@@ -289,9 +289,16 @@
   #jlightbox.on{ display:flex; }
   .jlb-frame{ display:flex; flex-direction:column; align-items:center;
     max-width:min(1100px,92vw); max-height:92vh; }
-  .jlb-photo{ background:#f4f1e8; padding:16px 16px 14px; box-shadow:0 30px 90px rgba(0,0,0,.9); }
-  .jlb-photo img{ display:block; max-width:min(1000px,84vw); max-height:70vh; width:auto; height:auto;
+  .jlb-photo{ background:#f4f1e8; padding:16px 16px 14px; box-shadow:0 30px 90px rgba(0,0,0,.9);
+    overflow:hidden; }                                       /* clip the photo when zoomed/panned */
+  /* height-driven so the enlarged photo is clearly BIGGER than the grid thumbnail
+     (max-width/height alone only ever shrink); zoom multiplies this via transform. */
+  .jlb-photo img{ display:block; height:min(78vh,760px); width:auto; max-width:90vw;
+    transform-origin:center center; will-change:transform; transition:transform .12s ease;
+    cursor:zoom-in; user-select:none; -webkit-user-drag:none;
     filter:contrast(1.04) saturate(.96) brightness(1.07); }
+  .jlb-photo img.zoomed{ cursor:grab; transition:none; }     /* live drag/zoom — no lag */
+  .jlb-photo img.grabbing{ cursor:grabbing; }
   .jlb-cap{ font-family:'Courier New',monospace; font-size:13px; color:var(--bone); letter-spacing:.03em;
     margin-top:18px; max-width:68ch; text-align:center; line-height:1.65; min-height:17px; }
   .jlb-count{ font-family:'Courier New',monospace; font-size:11px; letter-spacing:.26em; color:#7d8a80; margin-top:9px; }
@@ -302,6 +309,13 @@
     transition:background .2s, color .2s, border-color .2s; }
   .jlb-nav:hover{ background:rgba(159,216,255,.12); border-color:rgba(230,225,211,.6); color:#fff; }
   .jlb-prev{ left:clamp(10px, 4vw, 60px); } .jlb-next{ right:clamp(10px, 4vw, 60px); }
+  .jlb-zoom{ position:absolute; top:22px; left:26px; display:flex; gap:6px; align-items:center; }
+  .jlb-zbtn{ pointer-events:auto; cursor:pointer; background:rgba(10,14,18,.5); color:var(--bone);
+    border:1px solid rgba(230,225,211,.28); font-family:'Courier New',monospace; letter-spacing:.14em;
+    line-height:1; padding:9px 13px; transition:background .2s, color .2s, border-color .2s; }
+  .jlb-zbtn:hover{ background:rgba(159,216,255,.12); border-color:rgba(230,225,211,.6); color:#fff; }
+  #jlb-zoomout, #jlb-zoomin{ font-size:17px; min-width:38px; }
+  #jlb-zoomreset{ font-size:11px; }
 
   #pause-screen .pause-buttons{ margin-top:30px; display:flex; flex-direction:column; gap:11px; align-items:center; }
   #pause-screen .pause-meta{ margin-top:22px; font-family:'Courier New',monospace; font-size:11px;
@@ -412,6 +426,11 @@
 
     <div id="jlightbox">
       <button class="menu-btn small jlb-x" id="jlb-close">CLOSE</button>
+      <div class="jlb-zoom">
+        <button class="jlb-zbtn" id="jlb-zoomout" aria-label="Zoom out">&minus;</button>
+        <button class="jlb-zbtn" id="jlb-zoomreset" aria-label="Reset zoom">FIT</button>
+        <button class="jlb-zbtn" id="jlb-zoomin" aria-label="Zoom in">+</button>
+      </div>
       <button class="jlb-nav jlb-prev" id="jlb-prev" aria-label="Previous photograph">&lsaquo;</button>
       <div class="jlb-frame">
         <div class="jlb-photo"><img id="jlb-img" alt="" /></div>

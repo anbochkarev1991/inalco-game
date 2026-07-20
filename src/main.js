@@ -797,7 +797,7 @@ function frame() {
     try {
       const src = renderer.domElement;
       const cv = document.createElement('canvas');
-      cv.width = 480; cv.height = 380;   // 2x — the journal lightbox enlarges these
+      cv.width = 768; cv.height = 608;   // captured big so the journal lightbox can enlarge + zoom crisply
       const c2 = cv.getContext('2d');
       const s = Math.min(src.width / cv.width, src.height / cv.height) * 0.7;
       c2.drawImage(src,
