@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { LAYOUT, TUNE } from './config.js';
 import { canvasTexture } from './world.js';
 import { spawn } from './assets.js';
@@ -1591,33 +1592,239 @@ export class Story {
 
     // ================================================= 4) the north cemetery
     // High in the pines, out of the water's hearing — the graves they DID make,
-    // the payoff for walking into the empty north forest.
+    // the payoff for walking into the empty north forest. A proper enclosed
+    // family plot: a low rusted iron railing with spear-tipped pickets and a
+    // gate you walk through, orderly rows of Aldao headstones facing the gate,
+    // a family monument at the head, and the ruin of an older stone wall behind.
     {
       const C = LAYOUT.cemetery;
-      const stones = [
-        [-1.1, -1.0, 0.3, 0.12], [0.9, 0.6, -0.4, 0.18], [-0.4, 1.4, 0.1, 0.09],
-        [1.6, -0.7, 0.7, 0.2], [-1.8, 0.5, -0.2, 0.14], [0.4, -1.7, 0.5, 0.1],
-      ];
-      for (const [ox, oz, ry, tilt] of stones) {
-        const wv = 0.34 + Math.random() * 0.12, hv = 0.5 + Math.random() * 0.22;
-        headstone(C.x + ox, C.z + oz, ry, tilt, wv, hv,
-          Math.random() > 0.5 ? ['ALDAO', '1944'] : null);
+      const zS = C.z + 3.7;                 // south run — the side Ana approaches; holds the gate
+      const zN = C.z - 3.7;                 // north run — uphill
+      const xW = C.x - 4.4, xE = C.x + 4.4; // east/west runs
+      const xGL = C.x - 0.85, xGR = C.x + 0.85; // the gate opening
+
+      // ---- the wrought-iron railing (one merged mesh, faceted rusted iron) ----
+      const ironMat = new THREE.MeshLambertMaterial({ color: 0x2c2823, flatShading: true });
+      const ironGeos = [];
+      // a spear-tipped vertical picket, grounded to the local slope
+      const picket = (x, z, h = 0.6, lean = 0) => {
+        const y0 = gh(x, z);
+        const bar = new THREE.BoxGeometry(0.034, h, 0.034);
+        if (lean) bar.rotateZ(lean);
+        bar.translate(x, y0 + h / 2, z);
+        ironGeos.push(bar);
+        const tip = new THREE.ConeGeometry(0.03, 0.11, 4);
+        if (lean) tip.rotateZ(lean);
+        tip.translate(x, y0 + h + 0.05, z);
+        ironGeos.push(tip);
+      };
+      // fill a straight run with pickets + a top & bottom rail that hug the slope
+      const railRun = (ax, az, bx, bz, h = 0.6) => {
+        const len = Math.hypot(bx - ax, bz - az);
+        const n = Math.max(2, Math.round(len / 0.34));
+        const dx = (bx - ax) / n, dz = (bz - az) / n;
+        const ang = Math.atan2(dz, dx);
+        for (let i = 0; i <= n; i++) {
+          if (i > 0 && i < n && Math.random() < 0.06) continue;   // an occasional lost picket
+          picket(ax + dx * i, az + dz * i, h + (Math.random() - 0.5) * 0.05,
+            Math.random() < 0.12 ? (Math.random() - 0.5) * 0.2 : 0);
+        }
+        for (const rh of [h * 0.85, 0.14]) {                       // top & bottom rails
+          for (let i = 0; i < n; i++) {
+            const x0 = ax + dx * i, z0 = az + dz * i, mx = x0 + dx / 2, mz = z0 + dz / 2;
+            const seg = new THREE.BoxGeometry(Math.hypot(dx, dz) + 0.02, 0.03, 0.045);
+            seg.rotateY(-ang);
+            seg.translate(mx, gh(mx, mz) + rh, mz);
+            ironGeos.push(seg);
+          }
+        }
+      };
+      // a corner / gate post, taller with a ball finial (collider added by caller)
+      const post = (x, z, h = 1.0) => {
+        const y0 = gh(x, z);
+        const col = new THREE.BoxGeometry(0.09, h, 0.09); col.translate(x, y0 + h / 2, z);
+        const cap = new THREE.BoxGeometry(0.13, 0.05, 0.13); cap.translate(x, y0 + h + 0.025, z);
+        const ball = new THREE.SphereGeometry(0.05, 8, 6); ball.translate(x, y0 + h + 0.1, z);
+        ironGeos.push(col, cap, ball);
+      };
+      railRun(xW, zN, xE, zN);              // north (uphill)
+      railRun(xW, zN, xW, zS);              // west
+      railRun(xE, zN, xE, zS);              // east
+      railRun(xW, zS, xGL, zS);             // south, left of the gate
+      railRun(xGR, zS, xE, zS);             // south, right of the gate
+      post(xW, zN); post(xE, zN); post(xW, zS); post(xE, zS);      // four corners
+      post(xGL, zS, 1.16); post(xGR, zS, 1.16);                    // gate posts, taller
+
+      // the gate arch — a shallow iron curve spanning the posts
+      {
+        const top = 1.16, apex = 0.42, yL = gh(xGL, zS), yR = gh(xGR, zS), segs = 7;
+        const at = (t) => [xGL + (xGR - xGL) * t, (yL + (yR - yL) * t) + top + Math.sin(t * Math.PI) * apex];
+        for (let i = 0; i < segs; i++) {
+          const [x0, y0] = at(i / segs), [x1, y1] = at((i + 1) / segs);
+          const seg = new THREE.BoxGeometry(Math.hypot(x1 - x0, y1 - y0) + 0.02, 0.04, 0.04);
+          seg.rotateZ(Math.atan2(y1 - y0, x1 - x0));
+          seg.translate((x0 + x1) / 2, (y0 + y1) / 2, zS);
+          ironGeos.push(seg);
+        }
+        // a chain dropping from the apex for the dead lantern
+        const chain = new THREE.CylinderGeometry(0.006, 0.006, 0.32, 4);
+        chain.translate(C.x, gh(C.x, zS) + top + apex - 0.16, zS);
+        ironGeos.push(chain);
       }
-      // a low, broken stone wall along the uphill (north) edge
-      wallSeg(C.x - 2.4, C.z - 2.2, 1.3, 0.1);
-      wallSeg(C.x - 1.0, C.z - 2.35, 1.3, -0.05);
-      // (gap here — the wall is collapsed in the middle)
-      wallSeg(C.x + 1.7, C.z - 2.2, 1.1, 0.08);
-      wallSeg(C.x - 2.7, C.z - 0.9, 1.1, Math.PI / 2 + 0.1);
-      // the readable marker (UNMARKED, non-evidence)
-      const mx = C.x + 0.1, mz = C.z + 0.2;
-      headstone(mx, mz, 0.15, 0.04, 0.5, 0.78, ['INALCO', '·', '1944']);
-      this.addItem({
-        id: 'cemeteryNote', x: mx, z: mz, y: ground(mx, mz, 0.5),
-        marker: false, radius: 2.4, repeatable: true,
-        label: 'the weathered marker',
-        action: () => this.readNote('cemeteryNote'),
-      });
+
+      // two gate leaves in the opening — one hanging ajar into the plot, one shut.
+      // dir (±1) mirrors via the x-translations, never geometry.scale(), so the
+      // normals stay outward (a negative scale would flip winding → inside-out).
+      const gateLeaf = (hingeX, dir, swing) => {
+        const y0 = gh(hingeX, zS), W = xGR - xGL - 0.06, H = 0.94, parts = [];
+        for (const off of [0.02, W - 0.02]) {                      // side stiles
+          const s = new THREE.BoxGeometry(0.03, H, 0.03); s.translate(off * dir, H / 2, 0); parts.push(s);
+        }
+        for (const rh of [H - 0.08, 0.12]) {                       // rails
+          const r = new THREE.BoxGeometry(W, 0.028, 0.036); r.translate((W / 2) * dir, rh, 0); parts.push(r);
+        }
+        for (let i = 1; i <= 3; i++) {                             // inner pickets + tips
+          const off = (W * i) / 4;
+          const p = new THREE.BoxGeometry(0.026, H - 0.16, 0.026); p.translate(off * dir, (H - 0.16) / 2 + 0.06, 0); parts.push(p);
+          const t = new THREE.ConeGeometry(0.026, 0.08, 4); t.translate(off * dir, H - 0.02, 0); parts.push(t);
+        }
+        for (const g of parts) {                                   // swing about the hinge, then place
+          g.rotateY(swing * dir);
+          g.translate(hingeX, y0, zS);
+          ironGeos.push(g);
+        }
+      };
+      gateLeaf(xGL, 1, 0.78);      // left leaf, swung open into the plot
+      gateLeaf(xGR, -1, 0.05);     // right leaf, all but shut
+
+      const iron = new THREE.Mesh(mergeGeometries(ironGeos, false), ironMat);
+      for (const g of ironGeos) g.dispose();
+      iron.castShadow = true;
+      scene.add(iron);
+
+      // railing colliders (thin walls; the gate opening is left free to walk through)
+      col.addBox((xW + xGL) / 2, zS, xGL - xW, 0.2);   // south left
+      col.addBox((xGR + xE) / 2, zS, xE - xGR, 0.2);   // south right
+      col.addBox(C.x, zN, xE - xW, 0.2);               // north
+      col.addBox(xW, C.z, 0.2, zS - zN);               // west
+      col.addBox(xE, C.z, 0.2, zS - zN);               // east
+      solid(xGL, zS, 0.13); solid(xGR, zS, 0.13);      // gate posts
+
+      // the dead lantern hung under the arch (no light — the keepers are long gone)
+      place(spawn('Lantern_01', { s: 0.5 }), C.x, zS, 0.96, 0);
+
+      // ---- the family monument at the head of the plot (readable, non-evidence) ----
+      const gx = C.x, gz = C.z - 2.5;
+      {
+        const mon = new THREE.Group();
+        const box = (w, h, d, y) => {
+          const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), stoneMat);
+          b.position.y = y; b.castShadow = true; mon.add(b); return b;
+        };
+        box(1.0, 0.2, 1.0, 0.1);           // base step
+        box(0.74, 0.18, 0.74, 0.29);       // second step
+        box(0.46, 0.82, 0.46, 0.79);       // pedestal
+        box(0.14, 0.66, 0.14, 1.53);       // cross — upright
+        box(0.46, 0.14, 0.14, 1.62);       // cross — arms
+        const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.5),
+          engraveMat(['INALCO', '·', 'ALDAO', '1944']));
+        plate.position.set(0, 0.86, 0.235);
+        mon.add(plate);
+        place(mon, gx, gz, 0, 0.02);
+        solid(gx, gz, 0.62);
+        this.addItem({
+          id: 'cemeteryNote', x: gx, z: gz, y: ground(gx, gz, 0.9),
+          marker: false, radius: 2.8, repeatable: true,
+          label: 'read the family monument',
+          action: () => this.readNote('cemeteryNote'),
+        });
+      }
+
+      // ---- orderly rows of Aldao headstones, all facing the gate (south) ----
+      const epitaphs = [
+        ['ALDAO', '1944'], ['M. ALDAO', '1944'], ['R. ALDAO', '1943'], null,
+        ['ALDAO', '1944'], ['C. ALDAO', '1944'], null, ['ALDAO', '·'],
+      ];
+      let ei = 0;
+      const graveMound = (x, z) => {
+        const m = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+          new THREE.MeshLambertMaterial({ color: 0x35301f }));
+        m.scale.set(0.98, 0.26, 1.5);
+        place(m, x, z, -0.03);
+      };
+      for (const rz of [C.z - 0.9, C.z + 0.7]) {          // two tidy rows
+        for (const rx of [-2.9, -1.55, 1.55, 2.9]) {      // aisle kept clear up the middle
+          const ry = (Math.random() - 0.5) * 0.08, tilt = (Math.random() - 0.5) * 0.14;
+          headstone(C.x + rx, rz, ry, tilt, 0.36 + Math.random() * 0.08, 0.5 + Math.random() * 0.16,
+            epitaphs[ei % epitaphs.length]);
+          if (Math.random() < 0.5) graveMound(C.x + rx, rz + 0.75);   // mound at the foot
+          ei++;
+        }
+      }
+
+      // ---- older graves at the edges: two leaning wooden crosses ----
+      const woodCross = (x, z, ry, tilt) => {
+        const g = new THREE.Group();
+        const v = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.72, 0.07), woodMat);
+        v.position.y = 0.36; v.castShadow = true; g.add(v);
+        const h = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.07, 0.07), woodMat);
+        h.position.y = 0.52; g.add(h);
+        place(g, x, z, 0, ry); g.rotation.z = tilt;
+      };
+      woodCross(C.x + 3.4, C.z - 1.9, -0.2, 0.12);
+      woodCross(C.x - 3.5, C.z - 2.2, 0.25, -0.1);
+
+      // ---- a small unmarked child's stone, set apart in the near corner ----
+      headstone(C.x - 3.3, C.z + 2.3, 0.1, 0.05, 0.24, 0.3);
+      graveMound(C.x - 3.3, C.z + 2.9);
+      // a wilted bouquet laid at it — dark stems, faded petals
+      {
+        const g = new THREE.Group();
+        const stemMat = new THREE.MeshLambertMaterial({ color: 0x3a3a2a });
+        const petMat = new THREE.MeshLambertMaterial({ color: 0x6b3a44 });
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * Math.PI * 2;
+          const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.009, 0.22, 4), stemMat);
+          stem.position.set(Math.cos(a) * 0.03, 0.1, Math.sin(a) * 0.03);
+          stem.rotation.set(Math.sin(a) * 0.5, 0, Math.cos(a) * 0.5); g.add(stem);
+          const pet = new THREE.Mesh(new THREE.IcosahedronGeometry(0.03, 0), petMat);
+          pet.position.set(Math.cos(a) * 0.08, 0.19, Math.sin(a) * 0.08); g.add(pet);
+        }
+        place(g, C.x - 3.0, C.z + 2.55, 0, Math.random() * Math.PI);
+      }
+
+      // ---- a burnt-out votive candle at the foot of the monument ----
+      {
+        const g = new THREE.Group();
+        const jar = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.1, 10),
+          new THREE.MeshLambertMaterial({ color: 0x20302f, transparent: true, opacity: 0.5 }));
+        jar.position.y = 0.05; g.add(jar);
+        const wax = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 0.05, 8),
+          new THREE.MeshLambertMaterial({ color: 0xcfc7b0 }));
+        wax.position.y = 0.03; g.add(wax);
+        const wick = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.02, 4), charMat);
+        wick.position.y = 0.065; g.add(wick);
+        place(g, gx + 0.5, gz + 0.75, 0);
+      }
+
+      // ---- a stone bench inside the gate, worn to face the monument ----
+      {
+        const g = new THREE.Group();
+        const seat = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.1, 0.34), stoneMat);
+        seat.position.y = 0.42; seat.castShadow = true; g.add(seat);
+        for (const ox of [-0.44, 0.44]) {
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.4, 0.28), stoneMat);
+          leg.position.set(ox, 0.2, 0); g.add(leg);
+        }
+        place(g, C.x + 2.6, C.z + 2.4, 0);
+        solid(C.x + 2.6, C.z + 2.4, 0.55);
+      }
+
+      // ---- the ruin of the ORIGINAL wall behind the iron, uphill (older care) ----
+      wallSeg(C.x - 2.2, zN - 0.8, 1.4, 0.06);
+      wallSeg(C.x - 0.7, zN - 0.95, 1.3, -0.04);
+      // (gap — the old wall is collapsed in the middle)
+      wallSeg(C.x + 2.0, zN - 0.8, 1.2, 0.08);
     }
   }
 

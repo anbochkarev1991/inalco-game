@@ -1200,9 +1200,10 @@ export function buildWorld(scene, colliders) {
   // the drowned crew's abandoned camp (b1), now ~20 m east along the shore: keep
   // it clear so trunks/reeds don't spear the tents, gear and recording camera
   const nearCrewCamp = (x, z, r = 11) => Math.hypot(x - LAYOUT.crewCamp.x, z - LAYOUT.crewCamp.z) < r;
-  // a small clearing high in the north pines for the old cemetery (b1) so the
-  // leaning headstones + wall aren't speared by tree trunks
-  const nearCemetery = (x, z, r = 8) => Math.hypot(x - LAYOUT.cemetery.x, z - LAYOUT.cemetery.z) < r;
+  // a clearing high in the north pines for the old cemetery (b1) so the enclosed
+  // plot — iron railing, headstones, monument and the ruined outer wall — isn't
+  // speared by trunks. Widened when the graveyard was fenced & enlarged.
+  const nearCemetery = (x, z, r = 10.5) => Math.hypot(x - LAYOUT.cemetery.x, z - LAYOUT.cemetery.z) < r;
   const nearPads = (x, z, extra = 2.5) =>
     PADS.some((p) => Math.hypot(x - p.x, z - p.z) < p.r + extra) || nearCamp(x, z) || nearCrewCamp(x, z) || nearCemetery(x, z);
   const tooSteep = (x, z, lim = 0.5) => {
