@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const keys = ['estancia','shore','fire','draft','halfseen','cellar','congregation'];
+const keys = ['sign','shore','estancia','corridor','leanfar','draft','fire','veil','child','congregation','her','pshot'];
 
 let html = readFileSync(join(root, 'press/teaser.template.html'), 'utf8');
 for (const k of keys) {

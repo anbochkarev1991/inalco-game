@@ -14,6 +14,7 @@
     "npcshots": "node scripts/npcshots.mjs",
     "buildshots": "node scripts/buildshots.mjs",
     "cemshots": "node scripts/cemshots.mjs",
+    "teasershots": "node scripts/teasershots.mjs",
     "build-teaser": "node scripts/build-teaser.mjs",
     "render-teaser": "node scripts/render-teaser.mjs"
   },
