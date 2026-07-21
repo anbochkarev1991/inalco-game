@@ -400,6 +400,24 @@ const HAIR_SPREAD = 0.5;    // part-on-lunge: front strands sweep OUTWARD (yaw)
 const _toMe = new THREE.Vector3();
 const SOCKET_DARK = 0.92;
 
+// Step 6 · AI-path scratch vectors — reused every frame, never allocated per call
+// (same pattern as _tatTarget/_hairTarget/_toMe above). SIMULTANEITY AUDIT: within a
+// single Rumor.update() call, `_toPlayer` is live for the ENTIRE call (it is read by
+// updateDemo() and animate() too), so nothing else ever aliases it. `_move` and
+// `_face` can both be live at the same time (wander-threshold, abduct: moveDir + a
+// distinct faceDir), so they are separate scratches. `_move2` holds the detour-rotated
+// move direction while the pre-detour value (which faceDir may alias in gather) stays
+// in `_move`. `_observed` is local to observed() and never overlaps _move/_face/_face2.
+const _observed = new THREE.Vector3();
+const _toPlayer = new THREE.Vector3();
+const _move = new THREE.Vector3();
+const _face = new THREE.Vector3();
+const _move2 = new THREE.Vector3();
+// The chase-move solve is READ (this.pos = solved) only after the stuck-detour
+// probe below may call resolve() twice more, so it can't use colliders' shared
+// scratch (that probe would clobber it). It gets its own out object instead.
+const _solvedMove = { x: 0, z: 0 };
+
 // B4 · testigo finger reach/grasp. A single sprung "grasp" scalar drives every
 // finger on the smooth poseIndependent layer, coordinated with the SAME _lunge
 // beat as the hair-part (B2) so the lunge reads as one intent: hair back + hands
@@ -792,6 +810,14 @@ function buildRig(kind) {
   return { group, P };
 }
 
+// The feet sheen circle and the two splash rings are NEVER mutated per instance
+// (only their per-mesh scale and per-material opacity animate). Share one
+// geometry each across every Returned, so a spawn allocates no new geometry for
+// them and the GPU never re-uploads these buffers on first draw. The animated
+// line buffer below stays per-instance (its positions are rewritten each frame).
+const SHEEN_GEO = new THREE.CircleGeometry(0.52, 24);
+const RING_GEO = new THREE.RingGeometry(0.34, 0.4, 20);
+
 // per-instance run-off — water still sheeting down it, never finished draining.
 // Rivulets are motion-stretched LineSegments (top+bottom vert per streak) that
 // run down the body and wander so they follow its contour; a faint wet sheen +
@@ -826,7 +852,7 @@ function makeDrips(h) {
   const feet = new THREE.Group();
   feet.frustumCulled = false;
   const sheen = new THREE.Mesh(
-    new THREE.CircleGeometry(0.52, 24),
+    SHEEN_GEO,
     new THREE.MeshBasicMaterial({
       color: 0x9fb6c4, transparent: true, opacity: 0.05, depthWrite: false,
       blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
@@ -837,7 +863,7 @@ function makeDrips(h) {
   const rings = [];
   for (let r = 0; r < 2; r++) {
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.34, 0.4, 20),
+      RING_GEO,
       new THREE.MeshBasicMaterial({
         color: 0x9fb6c4, transparent: true, opacity: 0, depthWrite: false,
         blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
@@ -1094,7 +1120,7 @@ class Rumor {
   }
 
   observed(ctx) {
-    const toMe = new THREE.Vector3().subVectors(this.pos, ctx.playerPos);
+    const toMe = _observed.subVectors(this.pos, ctx.playerPos);
     const d = toMe.length();
     if (d > 40) return false;
     toMe.normalize();
@@ -1115,7 +1141,7 @@ class Rumor {
     this.stateT += dt;
     this.touchCd = Math.max(0, this.touchCd - dt);
     const spec = this.spec;
-    const toPlayer = new THREE.Vector3().subVectors(ctx.playerPos, this.pos);
+    const toPlayer = _toPlayer.subVectors(ctx.playerPos, this.pos);
     toPlayer.y = 0;
     const dist = toPlayer.length();
     const playerHidden = ctx.playerInHouse() && !this.allowHouse;
@@ -1169,9 +1195,9 @@ class Rumor {
             const inv = 1 / (spd || 1);
             const ux = (this.pos.x - sp.x) * inv, uz = (this.pos.z - sp.z) * inv;
             const edge = sp.r + 0.4;                       // hold just outside the boundary
-            const toEdge = new THREE.Vector3(sp.x + ux * edge - this.pos.x, 0, sp.z + uz * edge - this.pos.z);
+            const toEdge = _move.set(sp.x + ux * edge - this.pos.x, 0, sp.z + uz * edge - this.pos.z);
             if (toEdge.length() > 0.3) { moveDir = toEdge.normalize(); moveSpeed = spec.walk * 0.7; }
-            faceDir = new THREE.Vector3(sp.x - this.pos.x, 0, sp.z - this.pos.z);   // face the fire/player
+            faceDir = _face.set(sp.x - this.pos.x, 0, sp.z - this.pos.z);   // face the fire/player
             this.threshT += dt;
             if (this.threshT > 6.5 + (this.id % 4)) {
               this.threshT = -7;   // negative = cooldown before it lingers again
@@ -1193,7 +1219,7 @@ class Rumor {
         if (this.loiterT > 0) {
           this.loiterT -= dt;
           moveSpeed = 0;
-          faceDir = new THREE.Vector3(Math.sin(t * 0.4) * 0.15, 0, 1);   // face the lake (+z, south)
+          faceDir = _face.set(Math.sin(t * 0.4) * 0.15, 0, 1);   // face the lake (+z, south)
           break;
         }
         if (!this.wanderTarget || this.stateT > 9 || this.pos.distanceTo(this.wanderTarget) < 1.2) {
@@ -1204,7 +1230,7 @@ class Rumor {
           this.pickWanderTarget(ctx);
           this.stateT = 0;
         }
-        moveDir = new THREE.Vector3().subVectors(this.wanderTarget, this.pos).normalize();
+        moveDir = _move.subVectors(this.wanderTarget, this.pos).normalize();
         moveSpeed = spec.walk;
         break;
       }
@@ -1221,7 +1247,7 @@ class Rumor {
         }
         const post = ctx.claimPost?.(this);
         if (!post) { this.setState(playerHidden ? 'lurk' : 'wander'); break; }
-        const toPost = new THREE.Vector3(post.x - this.pos.x, 0, post.z - this.pos.z);
+        const toPost = _move.set(post.x - this.pos.x, 0, post.z - this.pos.z);
         const dP = toPost.length();
         this._atPost = dP <= 0.7;
         if (!this._atPost) {
@@ -1234,14 +1260,14 @@ class Rumor {
           // its own, up in the animation layer
           moveSpeed = 0;
           const sway = Math.sin(t * 0.5 + this.id) * 0.13;
-          faceDir = new THREE.Vector3(sway, 0, ctx.houseCenter.z - this.pos.z);   // face the house (north)
+          faceDir = _face.set(sway, 0, ctx.houseCenter.z - this.pos.z);   // face the house (north)
         }
         break;
       }
       case 'guard': {
         const a = t * 0.25;
         const gx = this.home.x + Math.cos(a) * 2.2, gz = this.home.z + Math.sin(a) * 2.2;
-        moveDir = new THREE.Vector3(gx - this.pos.x, 0, gz - this.pos.z);
+        moveDir = _move.set(gx - this.pos.x, 0, gz - this.pos.z);
         if (moveDir.lengthSq() > 0.05) moveDir.normalize(); else moveDir = null;
         moveSpeed = spec.walk;
         // the congregation faces you long before it moves — it is waiting
@@ -1264,7 +1290,7 @@ class Rumor {
           if (this.lostT > (this.kind === 'archivero' ? 6 : 2.2)) { this.setState('search'); break; }
         }
         const target = this.lostT > 0 ? this.lastSeen : ctx.playerPos;
-        const toTarget = new THREE.Vector3(target.x - this.pos.x, 0, target.z - this.pos.z);
+        const toTarget = _move.set(target.x - this.pos.x, 0, target.z - this.pos.z);
         const dT = toTarget.length();
         // approach off-axis: chasers come around your flank, not up the beam
         if (dT > 7 && this.kind !== 'archivero') {
@@ -1330,12 +1356,12 @@ class Rumor {
       }
       case 'search': {
         // go to where it last saw you, cast around, give up
-        const toLast = new THREE.Vector3(this.lastSeen.x - this.pos.x, 0, this.lastSeen.z - this.pos.z);
+        const toLast = _move.set(this.lastSeen.x - this.pos.x, 0, this.lastSeen.z - this.pos.z);
         if (toLast.length() > 1.4 && this.stateT < 8) {
           moveDir = toLast.normalize();
           moveSpeed = spec.walk * 1.6 || 1.2;
         } else {
-          faceDir = new THREE.Vector3(Math.sin(t * 0.7), 0, Math.cos(t * 0.7));
+          faceDir = _face.set(Math.sin(t * 0.7), 0, Math.cos(t * 0.7));
           if (this.stateT > 6.5) this.setState(this.guard ? 'guard' : 'wander');
         }
         if (!playerHidden && this.canSee(ctx, dist)) this.startChase(ctx);
@@ -1353,7 +1379,7 @@ class Rumor {
         const ang = Math.atan2(this.pos.z - hc.z, this.pos.x - hc.x) + dt * 0.22;
         const rad = 15.5;
         const tx = hc.x + Math.cos(ang) * rad, tz = hc.z + Math.sin(ang) * rad;
-        moveDir = new THREE.Vector3(tx - this.pos.x, 0, tz - this.pos.z);
+        moveDir = _move.set(tx - this.pos.x, 0, tz - this.pos.z);
         if (moveDir.lengthSq() > 0.04) moveDir.normalize(); else moveDir = null;
         moveSpeed = spec.walk * 1.1 || 0.9;
         faceDir = toPlayer;
@@ -1365,7 +1391,7 @@ class Rumor {
           const a = Math.random() * Math.PI * 2;
           this._away = new THREE.Vector3(this.pos.x + Math.cos(a) * 50, 0, this.pos.z + Math.sin(a) * 50);
         }
-        moveDir = new THREE.Vector3().subVectors(this._away, this.pos).normalize();
+        moveDir = _move.subVectors(this._away, this.pos).normalize();
         moveSpeed = spec.walk * 1.4 || 1.1;
         if (!playerHidden && this.canSee(ctx, dist)) { this._away = null; this.startChase(ctx); }
         break;
@@ -1377,9 +1403,9 @@ class Rumor {
         // that saves her: enough exposures dissolve it via the normal
         // exposeToFlash path. Being near it does nothing.
         if (!this.prey) { this.setState('wander'); break; }
-        const toPrey = new THREE.Vector3(this.prey.x - this.pos.x, 0, this.prey.z - this.pos.z);
+        const toPrey = _move.set(this.prey.x - this.pos.x, 0, this.prey.z - this.pos.z);
         const pd = toPrey.length();
-        faceDir = toPrey.clone();
+        faceDir = _face.copy(toPrey);   // un-normalized copy (was toPrey.clone()) — kept live while _move is normalized below
         if (pd > 1.3) { moveDir = toPrey.normalize(); moveSpeed = 1.7; }
         break;
       }
@@ -1407,7 +1433,7 @@ class Rumor {
     }
 
     if (this.scripted && this.state !== 'manifest' && this.state !== 'dying') {
-      moveDir = toPlayer.clone().normalize();
+      moveDir = _move.copy(toPlayer).normalize();   // was toPlayer.clone().normalize(); faceDir keeps the un-normalized toPlayer (_toPlayer)
       moveSpeed = 1.15;
       faceDir = toPlayer;
     }
@@ -1444,7 +1470,9 @@ class Rumor {
         this.detour -= dt;
         const a = Math.PI / 2.6 * this.detourSign;
         const cs = Math.cos(a), sn = Math.sin(a);
-        moveDir = new THREE.Vector3(moveDir.x * cs - moveDir.z * sn, 0, moveDir.x * sn + moveDir.z * cs);
+        // rotate into a SEPARATE scratch so a faceDir that aliases moveDir (gather at
+        // the window) keeps its pre-detour value, exactly as the old `new Vector3` did
+        moveDir = _move2.set(moveDir.x * cs - moveDir.z * sn, 0, moveDir.x * sn + moveDir.z * cs);
       }
       let nx = this.pos.x + moveDir.x * moveSpeed * dt;
       let nz = this.pos.z + moveDir.z * moveSpeed * dt;
@@ -1452,7 +1480,7 @@ class Rumor {
       if (ctx.ground(nx, nz) < -0.1 || (!this.allowHouse && ctx.insideHouseM(nx, nz, 0.9))) {
         nx = this.pos.x; nz = this.pos.z; this.stuck += dt * 2;
       }
-      const solved = ctx.colliders.resolve(nx, nz, 0.5);
+      const solved = ctx.colliders.resolve(nx, nz, 0.5, -Infinity, Infinity, _solvedMove);
       const movedSq = (solved.x - this.pos.x) ** 2 + (solved.z - this.pos.z) ** 2;
       const wantSq = (moveSpeed * dt) ** 2;
       if (movedSq < wantSq * 0.2) this.stuck += dt; else this.stuck = Math.max(0, this.stuck - dt * 2);
@@ -1578,7 +1606,9 @@ class Rumor {
     }
 
     if (moveDir && moveSpeed > 0) {
-      const dir = new THREE.Vector3(moveDir.x, 0, moveDir.z);
+      // demo path skips the state switch, so `_move` is free here; must not alias
+      // `_toPlayer` (moveDir) which is still read below for the facing yaw
+      const dir = _move.set(moveDir.x, 0, moveDir.z);
       if (dir.lengthSq() > 1e-6) {
         dir.normalize();
         let nx = this.pos.x + dir.x * moveSpeed * dt;
@@ -2436,6 +2466,56 @@ export class Director {
     this.postTakenBy = new Array(this.windowPosts.length).fill(null);
     this._claimPostBound = (e) => this._claimPost(e);
     this._releasePostBound = (e) => this._releasePost(e);
+    // Step 5 · bind the four ctx handlers ONCE (mirrors _claimPostBound above) and
+    // build `ctx` ONCE; update() only mutates its data fields each frame, so there is
+    // no per-frame closure/object allocation. Handlers read the live player through
+    // this.ctx.playerPos (set = pl.pos every frame) and the frame time via this._time,
+    // which the original closures captured as `pl`/`time` — behaviour is identical.
+    this._time = 0;
+    this._playerInHouseBound = () => this.hooks.insideHouse(this.ctx.playerPos.x, this.ctx.playerPos.z);
+    this._onTouchBound = (e) => {
+      if (e.scripted) { this.despawnScripted(e); return; }
+      this.hooks.onHit(TUNE.hitDamage, e.pos);
+    };
+    this._onScreamBound = (e) => {
+      const pan = Math.max(-1, Math.min(1, (e.pos.x - this.ctx.playerPos.x) / 30));
+      this.audio.scream(pan, e.kind);
+    };
+    this._onUtterBound = (e, o) => {
+      if (this._time - this._lastUtterAt < UTTER_MIN_GAP) return;
+      let closer = 0;
+      const ppos = this.ctx.playerPos;
+      for (const other of this.enemies) {
+        if (other === e || other.state === 'manifest' || other.state === 'dying') continue;
+        if (other.pos.distanceTo(ppos) < o.dist && ++closer >= UTTER_MAX_VOICES) break;
+      }
+      if (closer >= UTTER_MAX_VOICES) return;
+      const pan = Math.max(-1, Math.min(1, (e.pos.x - ppos.x) / 30));
+      const intensity = Math.max(0.3, 1 - o.dist / (UTTER_RANGE + 6));
+      this._lastUtterAt = this._time;
+      this.audio.monsterVoice?.(e.kind, pan, { dist: o.dist, state: o.state, intensity, pin: o.pin, lunge: o.lunge });
+    };
+    // constant fields set once; the mutable data fields (playerPos/playerDir/flashOn/
+    // safeSpots/isPowered) are refreshed each frame in update(). windowPosts never
+    // changes after construction, so claimPost is bound once here too.
+    this.ctx = {
+      playerPos: null,
+      playerDir: null,
+      flashOn: false,
+      colliders: this.colliders,
+      ground: this.ground,
+      insideHouse: this.hooks.insideHouse,
+      insideHouseM: this.hooks.insideHouseM,
+      playerInHouse: this._playerInHouseBound,
+      houseCenter: this.hooks.houseCenter,
+      safeSpots: [],
+      isPowered: false,
+      claimPost: this.windowPosts.length ? this._claimPostBound : null,
+      releasePost: this._releasePostBound,
+      onTouch: this._onTouchBound,
+      onScream: this._onScreamBound,
+      onUtter: this._onUtterBound,
+    };
     this.watchedCd = 0;
     this.calm = new URLSearchParams(location.search).has('calm');
     warmRigTemplates();          // pay the geometry cost at load, not mid-chase
@@ -2486,7 +2566,11 @@ export class Director {
     return e < 0 ? 0 : e > 3 ? 3 : e;
   }
 
-  activeCount() { return this.enemies.filter((e) => !e.scripted && e.state !== 'dying').length; }
+  activeCount() {
+    let n = 0;
+    for (let i = 0; i < this.enemies.length; i++) { const e = this.enemies[i]; if (!e.scripted && e.state !== 'dying') n++; }
+    return n;
+  }
 
   spawn(kind, x, z, opts = {}) {
     const e = new Rumor(kind, x, z, opts);
@@ -2549,17 +2633,23 @@ export class Director {
   }
 
   chasingCount() {
-    return this.enemies.filter((e) => e.state === 'chase').length;
+    let n = 0;
+    for (let i = 0; i < this.enemies.length; i++) if (this.enemies[i].state === 'chase') n++;
+    return n;
   }
 
   flash(camPos, camDir) {
     const hits = [];
-    for (const e of [...this.enemies]) {
+    // camDir is constant across the loop — flatten the beam direction ONCE (was
+    // recomputed per enemy). Backwards index loop: despawnScripted() splices the
+    // array mid-loop, so a copy is no longer needed to stay splice-safe.
+    const flat = new THREE.Vector3(camDir.x, 0, camDir.z).normalize();
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const e = this.enemies[i];
       const to = new THREE.Vector3(e.pos.x - camPos.x, 0, e.pos.z - camPos.z);
       const d = to.length();
       if (d > TUNE.flashRange) continue;
       to.normalize();
-      const flat = new THREE.Vector3(camDir.x, 0, camDir.z).normalize();
       if (to.dot(flat) < TUNE.flashCos && d > 2.2) continue;
       if (e.scripted) {
         this.despawnScripted(e);
@@ -2589,49 +2679,22 @@ export class Director {
   update(dt, time) {
     const pl = this.hooks.getPlayer();
     const safeSpots = this.hooks.safeSpots?.() ?? [];
-    const ctx = {
-      playerPos: pl.pos,
-      playerDir: pl.dir,
-      flashOn: pl.flashOn,
-      colliders: this.colliders,
-      ground: this.ground,
-      insideHouse: this.hooks.insideHouse,
-      insideHouseM: this.hooks.insideHouseM,
-      playerInHouse: () => this.hooks.insideHouse(pl.pos.x, pl.pos.z),
-      houseCenter: this.hooks.houseCenter,
-      safeSpots,
-      // a3: the lit-window gathering behavior, only live while the house is powered
-      isPowered: this.hooks.isPowered ? this.hooks.isPowered() : false,
-      claimPost: this.windowPosts.length ? this._claimPostBound : null,
-      releasePost: this._releasePostBound,
-      onTouch: (e) => {
-        if (e.scripted) { this.despawnScripted(e); return; }
-        this.hooks.onHit(TUNE.hitDamage, e.pos);
-      },
-      onScream: (e) => {
-        const pan = Math.max(-1, Math.min(1, (e.pos.x - pl.pos.x) / 30));
-        this.audio.scream(pan, e.kind);
-      },
-      // E1 · per-monster utterance. Anti-cacophony: a global min-gap between ANY
-      // two utterances, plus a nearest-only cap so a crowd reads as a few voices
-      // (mirrors onScream's pan). Then a distance-based intensity → the per-kind
-      // voice dispatcher. Enemy scheduling/gating lives in Rumor.updateUtter.
-      onUtter: (e, o) => {
-        if (time - this._lastUtterAt < UTTER_MIN_GAP) return;
-        let closer = 0;
-        for (const other of this.enemies) {
-          if (other === e || other.state === 'manifest' || other.state === 'dying') continue;
-          if (other.pos.distanceTo(pl.pos) < o.dist && ++closer >= UTTER_MAX_VOICES) break;
-        }
-        if (closer >= UTTER_MAX_VOICES) return;
-        const pan = Math.max(-1, Math.min(1, (e.pos.x - pl.pos.x) / 30));
-        const intensity = Math.max(0.3, 1 - o.dist / (UTTER_RANGE + 6));
-        this._lastUtterAt = time;
-        this.audio.monsterVoice?.(e.kind, pan, { dist: o.dist, state: o.state, intensity, pin: o.pin, lunge: o.lunge });
-      },
-    };
+    // Step 5 · reuse the single ctx built in the constructor; only its per-frame data
+    // fields are refreshed here. The four handlers + all constant fields were bound
+    // once. this._time feeds the onUtter min-gap that used the captured `time`.
+    this._time = time;
+    const ctx = this.ctx;
+    ctx.playerPos = pl.pos;
+    ctx.playerDir = pl.dir;
+    ctx.flashOn = pl.flashOn;
+    ctx.safeSpots = safeSpots;
+    // a3: the lit-window gathering behavior, only live while the house is powered
+    ctx.isPowered = this.hooks.isPowered ? this.hooks.isPowered() : false;
 
-    for (const e of [...this.enemies]) {
+    // backwards index loop: splice-safe (despawn/despawnScripted splice this.enemies)
+    // with zero per-frame array copy.
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const e = this.enemies[i];
       e.update(dt, ctx);
       if (e.state === 'dying' && e.dying >= 1) { this.despawn(e); continue; }
       if (e.demo && e.demoExpire) { this.despawn(e); continue; }   // c4: the lesson is over

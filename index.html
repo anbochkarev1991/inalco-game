@@ -255,6 +255,19 @@
 
   #journal-screen{ background:#06090e; }
 
+  #options-screen{ background:#06090e; }
+  .options-title{ font-family:'Courier New',monospace; font-size:13px; letter-spacing:.28em;
+    color:var(--bone); text-transform:uppercase; }
+  .options-body{ position:relative; width:min(560px,92vw); display:flex; flex-direction:column;
+    align-items:center; gap:34px; }
+  .opt-group{ display:flex; flex-direction:column; align-items:center; gap:16px; }
+  .opt-label{ font-family:'Courier New',monospace; font-size:11px; letter-spacing:.26em;
+    color:#7d8a80; text-transform:uppercase; }
+  .opt-choices{ display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+  .opt-choice{ min-width:96px; }
+  .opt-choice.on{ background:rgba(159,216,255,.16); border-color:rgba(230,225,211,.75); color:#fff; }
+  .opt-note{ font-style:italic; }
+
   .journal-head{ position:absolute; top:26px; left:0; width:100%; display:flex;
     justify-content:space-between; align-items:center; padding:0 34px; }
   .journal-tabs{ display:flex; gap:6px; }
@@ -403,6 +416,7 @@
           <button class="menu-btn" id="menu-continue">CONTINUE</button>
           <button class="menu-btn" id="menu-new">BEGIN</button>
           <button class="menu-btn" id="menu-journal">JOURNAL</button>
+          <button class="menu-btn" id="menu-options">OPTIONS</button>
         </div>
         <div id="menu-continue-info" class="menu-hint"></div>
       </div>
@@ -422,6 +436,26 @@
         <button class="menu-btn small" id="journal-back">BACK</button>
       </div>
       <div class="journal-body" id="journal-body"></div>
+    </div>
+
+    <div id="options-screen" class="screen">
+      <div class="journal-head">
+        <div class="options-title">OPTIONS</div>
+        <button class="menu-btn small" id="options-back">BACK</button>
+      </div>
+      <div class="options-body">
+        <div class="opt-group">
+          <div class="opt-label">GRAPHICS QUALITY</div>
+          <div class="opt-choices">
+            <button class="menu-btn opt-choice" data-q="auto">AUTO</button>
+            <button class="menu-btn opt-choice" data-q="low">LOW</button>
+            <button class="menu-btn opt-choice" data-q="medium">MEDIUM</button>
+            <button class="menu-btn opt-choice" data-q="high">HIGH</button>
+          </div>
+          <div class="opt-auto-hint menu-hint" id="options-auto-hint"></div>
+        </div>
+        <div class="opt-note menu-hint">Some changes apply after restart.</div>
+      </div>
     </div>
 
     <div id="jlightbox">
@@ -445,6 +479,7 @@
       <div class="pause-buttons">
         <button class="menu-btn" id="pause-resume">RESUME</button>
         <button class="menu-btn" id="pause-journal">JOURNAL</button>
+        <button class="menu-btn" id="pause-options">OPTIONS</button>
         <button class="menu-btn" id="pause-restart">RESTART NIGHT</button>
         <button class="menu-btn" id="pause-menu">MAIN MENU</button>
       </div>

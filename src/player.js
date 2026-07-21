@@ -81,6 +81,11 @@ export class Player {
     scene.add(this.burst);
 
     this._camEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+    // per-frame scratch, preallocated so update()/camDir() allocate nothing
+    this._camDir = new THREE.Vector3();   // default out for camDir()
+    this._right = new THREE.Vector3();    // camera right basis
+    this._ld = new THREE.Vector3();       // lagged flashlight direction
   }
 
   look(dx, dy) {
@@ -116,7 +121,7 @@ export class Player {
     if (typeof d.flashCharge === 'number') this.flashCharge = d.flashCharge;
   }
 
-  camDir(out = new THREE.Vector3()) {
+  camDir(out = this._camDir) {
     return out.set(
       -Math.sin(this.yaw) * Math.cos(this.pitch),
       Math.sin(this.pitch),
@@ -271,7 +276,7 @@ export class Player {
     const eye = this.pos.y + T.eyeHeight + bobY;
     this._camEuler.set(this.pitch, this.yaw, swayR + bobX * 0.14);
     this.camera.quaternion.setFromEuler(this._camEuler);
-    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const right = this._right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     this.camera.position.set(this.pos.x + bobX * 0.32 * right.x, eye, this.pos.z + bobX * 0.32 * right.z);
 
     // ---- flashlight follows with lag
@@ -280,7 +285,7 @@ export class Player {
     dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
     this.lightYaw += dyaw * lagRate;
     this.lightPitch += (this.pitch - this.lightPitch) * lagRate;
-    const ld = new THREE.Vector3(
+    const ld = this._ld.set(
       -Math.sin(this.lightYaw) * Math.cos(this.lightPitch),
       Math.sin(this.lightPitch),
       -Math.cos(this.lightYaw) * Math.cos(this.lightPitch)

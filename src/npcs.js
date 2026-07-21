@@ -271,7 +271,8 @@ export function buildNPCs(scene, colliders) {
   eliseo.group.rotation.y = 0.7;
   scene.add(eliseo.group);
   colliders.addCircle(TREE.x - 1.9, TREE.z - 1.2, 0.35);
-  list.push({ id: 'eliseo', name: 'DON ELISEO', x: TREE.x - 1.9, z: TREE.z - 1.2, rig: eliseo });
+  const eliseoNpc = { id: 'eliseo', name: 'DON ELISEO', x: TREE.x - 1.9, z: TREE.z - 1.2, rig: eliseo };
+  list.push(eliseoNpc);
   // his lantern, hung on the low branch
   const lanternModel = spawn('Lantern_01', { x: TREE.x - 1.1, y: treeY + 1.92, z: TREE.z - 0.7, s: 0.5 });
   scene.add(lanternModel);
@@ -299,6 +300,11 @@ export function buildNPCs(scene, colliders) {
     return line;
   };
 
+  // driveFaces runs every frame (even paused). Prealloc the rig/id pairing once
+  // so it doesn't build 4 arrays per frame; only the mara slot ([1][0]) flips
+  // between the seated-huddle and walker rigs each call.
+  const _faceRigs = [[rufino, 'rufino'], [maraWalker, 'mara'], [eliseo, 'eliseo']];
+
   return {
     list,
     campfire: { x: CAMP.x, z: CAMP.z, light: fireLight },
@@ -312,7 +318,8 @@ export function buildNPCs(scene, colliders) {
       t0 = time;
       // fire flicker
       fireLight.intensity = 1.75 + Math.sin(time * 11) * 0.35 + Math.sin(time * 23.7) * 0.22;
-      for (const [i, f] of flames.entries()) {
+      for (let i = 0; i < flames.length; i++) {
+        const f = flames[i];
         f.scale.y = 1 + Math.sin(time * 9 + i * 2.1) * 0.18;
         f.scale.x = 1 + Math.sin(time * 7.3 + i) * 0.1;
         f.rotation.y += dt * 0.6;
@@ -336,7 +343,7 @@ export function buildNPCs(scene, colliders) {
 
       // Mara: three modes — WALKING a route, HUDDLED in the greenhouse, or
       // STANDING idle where a walk left her (e.g. by the boat).
-      const mNpc = list.find((n) => n.id === 'mara');
+      const mNpc = maraNpc;
       if (mNpc._walking && mNpc._paused) {
         // ---- held in place, terrified, while something has her: no travel,
         // a fast panicked breath, face wrenched back toward the threat/player
@@ -417,7 +424,7 @@ export function buildNPCs(scene, colliders) {
       // otherwise rocks slowly over his work, head down, with an occasional
       // slow glance up at the old arrayán.
       const e = eliseo;
-      const eNpc = list.find((n) => n.id === 'eliseo');
+      const eNpc = eliseoNpc;
       const de = Math.hypot(playerPos.x - eNpc.x, playerPos.z - eNpc.z);
       if (de < 7) {
         const yaw = Math.atan2(playerPos.x - eNpc.x, playerPos.z - eNpc.z) - e.group.rotation.y;
@@ -445,8 +452,9 @@ export function buildNPCs(scene, colliders) {
         else if (who === 'DON ELISEO') talkId = 'eliseo';
       }
       // Mara's talking head is whichever rig is currently shown (huddle vs walker)
-      const maraRig = maraNpc._seated ? mara : maraWalker;
-      for (const [rig, id] of [[rufino, 'rufino'], [maraRig, 'mara'], [eliseo, 'eliseo']]) {
+      _faceRigs[1][0] = maraNpc._seated ? mara : maraWalker;
+      for (let k = 0; k < _faceRigs.length; k++) {
+        const rig = _faceRigs[k][0], id = _faceRigs[k][1];
         const sf = rig.head.userData.setFace;
         if (!sf) continue;
         const off = rig.head.userData.blinkOff || 0;

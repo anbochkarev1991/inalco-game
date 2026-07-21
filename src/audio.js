@@ -6,20 +6,37 @@ export class GameAudio {
     this.ctx = null;
     this.ok = false;
     this._hb = 0;
+    // Build the AudioContext (in its default SUSPENDED state) and fill the
+    // ~180k-sample noise buffer NOW, during the loading screen, rather than on the
+    // click-to-begin gesture — moving that one-time fill off the worst moment.
+    // createBuffer works while suspended; ensure() (in the gesture) then just
+    // resume()s this same context and builds the live graph. If WebAudio is
+    // unavailable, leave ctx null and ensure() builds + fills lazily as before.
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.noiseBuf = this._makeNoise(4);
+    } catch (e) {
+      this.ctx = null;
+      this.noiseBuf = null;
+    }
   }
 
   ensure() {
     if (this.ok) { this.ctx.resume().catch(() => {}); return; }
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      this.ctx = ctx;
+      // ctx + noiseBuf are pre-built in the constructor (during the load screen) on
+      // a suspended context, so the noise fill never hitches the begin gesture. Fall
+      // back to building them here if that failed. resume() here — inside the user
+      // gesture — is what actually unlocks audio.
+      const ctx = this.ctx || (this.ctx = new (window.AudioContext || window.webkitAudioContext)());
+      ctx.resume().catch(() => {});
       const master = ctx.createGain(); master.gain.value = 0.85;
       const comp = ctx.createDynamicsCompressor();
       comp.threshold.value = -18; comp.knee.value = 20; comp.ratio.value = 5;
       master.connect(comp); comp.connect(ctx.destination);
       this.master = master;
 
-      this.noiseBuf = this._makeNoise(4);
+      if (!this.noiseBuf) this.noiseBuf = this._makeNoise(4);
 
       // --- wind: two band-passed noise layers, gusting ---
       this.wind = this._loopNoise(420, 3.5, 0.0);
@@ -771,19 +788,19 @@ export class GameAudio {
   update(dt, p) {
     if (!this.ok) return;
     const t = this.ctx.currentTime;
-    const set = (param, v, tc = 0.25) => param.setTargetAtTime(v, t, tc);
+    // Ramp targets on persistent nodes directly (no per-frame closure allocated).
 
     // wind with slow gust cycles
     this._gust += dt;
     const gust = 0.6 + 0.4 * Math.sin(this._gust * 0.23) * Math.sin(this._gust * 0.071 + 2);
-    set(this.wind.gain.gain, 0.055 * p.wind * gust, 0.6);
-    set(this.wind2.gain.gain, 0.075 * p.wind * (1.25 - gust * 0.5), 0.8);
+    this.wind.gain.gain.setTargetAtTime(0.055 * p.wind * gust, t, 0.6);
+    this.wind2.gain.gain.setTargetAtTime(0.075 * p.wind * (1.25 - gust * 0.5), t, 0.8);
     this.wind.pan.pan.value = Math.sin(this._gust * 0.1) * 0.5;
 
     // lake laps
     this._lapT += dt;
     const lap = Math.max(0, Math.sin(this._lapT * 2.2)) ** 3 * 0.5 + 0.5;
-    set(this.lake.gain.gain, 0.11 * p.lake * lap, 0.15);
+    this.lake.gain.gain.setTargetAtTime(0.11 * p.lake * lap, t, 0.15);
 
     // night insects — a quiet living bed whose SILENCE warns of the Returned.
     // Fast ramp to silence when danger nears (p.insects drops), slow fade back
@@ -792,11 +809,11 @@ export class GameAudio {
     const insTarget = 0.05 * (p.insects ?? 0);
     const insTc = insTarget < this._insectsCur ? 0.45 : 2.2;   // fast cut, slow return
     this._insectsCur = insTarget;
-    set(this.insectsGain.gain, insTarget, insTc);
+    this.insectsGain.gain.setTargetAtTime(insTarget, t, insTc);
 
     // campfire — rumble + pops when near
     const fireLvl = p.fire ?? 0;
-    set(this.fire.gain.gain, 0.14 * fireLvl, 0.3);
+    this.fire.gain.gain.setTargetAtTime(0.14 * fireLvl, t, 0.3);
     if (fireLvl > 0.05) {
       this._firePopT -= dt;
       if (this._firePopT <= 0) {
@@ -809,8 +826,8 @@ export class GameAudio {
     const wLvl = p.whisper ?? 0;
     this._whisperEnv += dt * (4 + Math.random() * 7);
     const syllable = Math.max(0, Math.sin(this._whisperEnv)) * (Math.random() > 0.3 ? 1 : 0.15);
-    set(this.whisper1.gain.gain, 0.07 * wLvl * syllable, 0.05);
-    set(this.whisper2.gain.gain, 0.045 * wLvl * (1 - syllable * 0.6), 0.05);
+    this.whisper1.gain.gain.setTargetAtTime(0.07 * wLvl * syllable, t, 0.05);
+    this.whisper2.gain.gain.setTargetAtTime(0.045 * wLvl * (1 - syllable * 0.6), t, 0.05);
     this.whisper1.pan.pan.value = Math.sin(this._gust * 0.9) * 0.7;
     this.whisper2.pan.pan.value = -Math.sin(this._gust * 0.7) * 0.7;
     if (wLvl > 0.05) {
@@ -819,7 +836,7 @@ export class GameAudio {
     }
 
     // radio static + crackle impulses
-    set(this.static.gain.gain, 0.4 * p.static, 0.07);
+    this.static.gain.gain.setTargetAtTime(0.4 * p.static, t, 0.07);
     if (p.static > 0.06) {
       this._crackleT -= dt;
       if (this._crackleT <= 0) {
@@ -828,8 +845,8 @@ export class GameAudio {
       }
     }
 
-    set(this.droneGain.gain, 0.16 * p.drone, 1.2);
-    set(this.genGain.gain, this.genOn ? 0.1 * p.genProximity : 0, 0.3);
+    this.droneGain.gain.setTargetAtTime(0.16 * p.drone, t, 1.2);
+    this.genGain.gain.setTargetAtTime(this.genOn ? 0.1 * p.genProximity : 0, t, 0.3);
 
     // heartbeat
     if (p.heartbeat > 0) {

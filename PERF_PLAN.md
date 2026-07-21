@@ -28,6 +28,16 @@ verification pass. Steps that touch the same file are marked and must be done
 A frame > ~24 ms drops below 40 fps and reads as a stutter; > 50 ms reads as a freeze.
 The three real problems are **event spikes**, not steady frame rate:
 
+> **Calibration note (after Step 1, warm run on a fast machine):** absolute frame
+> times are strongly machine- and warmth-dependent. The table above was a **cold** first
+> run — which is what a player hits on *first encounter* (the worst moment for a freeze).
+> A warm run on fast hardware measures lower: flash+expose 49–81 ms, spawn 38 ms,
+> **take photo (full album) 44 ms** (serializes ~3.1 MB every shot), **long walk GC tail
+> 67 ms**, single photo 14–18 ms, finale churn 12 ms. Both regimes matter: cold/first-
+> encounter and slower player hardware push these back toward the 100–400 ms range, so the
+> fixes below target the *cause* (synchronous heavy work on the render thread), which
+> improves both. Compare each step against the `PERFJSON` line the harness now emits.
+
 1. **Taking a photo freezes for 300–400 ms** — and photography is the core mechanic.
    Root cause: on a successful flash, `frame()` synchronously runs
    `canvas.toDataURL('image/jpeg')` **and** `journal.save()`, which
@@ -158,6 +168,68 @@ Step 2 (which already de-fangs the storage half).
 just not re-issued 60×/s. **Acceptance:** `finale objective churn` < 16 ms worst, no
 per-frame allocation in the finale branch; objective text updates look identical.
 **Risk:** low. **Rollback:** revert the guard.
+
+---
+
+## TIER LE — Low-end / older-hardware scaling *(added on user request — high priority)*
+
+A weak PC (playtester report, 2026-07-20) freezes and runs badly. The freeze fixes above
+help every machine, but a weak GPU's real bottleneck is **fill rate and pass count**, which
+the current settings ignore: pixel ratio up to **1.25×** (56% more pixels than native),
+**MSAA**, **PCF-soft shadow maps** (a second scene pass), a **4-pass composer incl. UnrealBloom**
+(~10 blur passes), and **70 transparent fog sprites** (heavy overdraw).
+
+**Approved strategy:** *auto-adaptive quality + a manual Low/Medium/High override in Options.*
+Capable machines keep today's exact look; only a struggling machine scales down. This is the
+one sanctioned exception to "no visual change" — and it applies **only** on hardware that
+would otherwise stutter. Quality levers, by tier:
+
+| Lever | HIGH (today) | MEDIUM | LOW |
+|---|---|---|---|
+| pixel ratio | min(dpr, 1.25) | 1.0 | 0.75 |
+| shadows | PCFSoft, full map | smaller map / PCF | **off** |
+| bloom (UnrealBloom) | full res | half res | **off (skip pass)** |
+| MSAA (`antialias`) | on | on | off *(needs reload)* |
+| fog sprites | 70 | ~45 | ~20 |
+| fog density / far | 100% | ~90% | ~80% |
+
+MSAA is fixed at `WebGLRenderer` construction, so it can only change on reload — tie it to the
+saved/detected tier and note "restart to apply" in the menu for that one lever. Everything else
+applies live.
+
+### STEP LE-0 — Harness: emulate a weak machine (CDP CPU throttle) *(do first in this tier)*
+**Touches:** `scripts/perf.mjs`. Add a throttled pass using CDP
+`Emulation.setCPUThrottlingRate` (e.g. 4× and 6×) to reproduce the weak-CPU experience, and a
+hook to force a quality tier for A/B once LE-1 lands. Establishes the weak-HW baseline the rest
+of the tier is measured against (GPU can't be throttled directly, but pixel-ratio wins scale
+linearly with pixel count and are reasoned from that). **Acceptance:** prints a `throttled 6x`
+battery + `PERFJSON`; documents today's (bad) throttled numbers.
+
+### STEP LE-1 — Quality manager + renderer/postfx/world levers + startup probe
+**Touches:** new `src/quality.js`; `main.js` (wire after renderer/postfx/world built);
+`postfx.js` (bloom enable/res + expose a setter); `world.js` (fog-sprite count + density scale
+setters). Build a module owning the current tier, a `tiers` table (above), `setTier()`/`getTier()`,
+localStorage persistence, and a conservative **startup probe** (GPU renderer string via
+`WEBGL_debug_renderer_info`, `navigator.hardwareConcurrency`, `devicePixelRatio`) that picks a
+safe initial tier. Applying a tier must be **idempotent and live** (except MSAA). Default mode =
+Auto (see LE-2). **Acceptance:** forcing LOW via `__niebla` measurably cuts frame time under the
+LE-0 throttle with the game still fully playable; HIGH is pixel-identical to pre-change (diff a
+still). Bloom-off/shadow-off look different **only** at LOW, by design.
+
+### STEP LE-2 — Auto-adaptive frame-time governor
+**Touches:** `main.js` (or `quality.js`). Track a rolling mean frame time; when sustained slow
+(> ~24 ms ≈ <42 fps for ~2 s) **step the tier down one notch**; strong hysteresis so it never
+oscillates; only auto-**downshift** (optional very-conservative upshift after long sustained
+headroom). Active only in Auto mode; persists the settled tier as the next-launch start.
+**Acceptance:** under LE-0's 6× throttle the governor drops to a smooth tier within a couple of
+seconds and then holds steady (no flip-flopping); disabled the instant the player picks a manual tier.
+
+### STEP LE-3 — Options-menu quality selector
+**Touches:** the Options overlay (`index.html` + its handler in `main.js`/`menu.js`),
+`quality.js`. Add an **Auto / Low / Medium / High** control; wire to `quality.setTier` / Auto;
+persist; reflect the currently-active auto tier as a hint. Note "restart to apply" beside the
+MSAA-affected choice. **Acceptance:** picking a level changes quality live (except MSAA), survives
+reload, and disables the auto-governor; matches the existing options-menu styling.
 
 ---
 
@@ -356,12 +428,34 @@ medium — never trade a shorter load for a returning in-play hitch. **Rollback:
 
 ## Suggested order & dependencies
 
-1. **Step 1** (harness) — unblocks proof for everything.
-2. **Steps 2 → 4 → 3** (Tier 1) — the biggest, most visible wins first: photo freeze,
-   finale churn, spawn stutter.
-3. **Steps 5, 6** then **7, 8, 9, 10, 11, 12, 13** (Tier 2) — steady-state smoothness.
-4. **Step 14**, then **15** if it measures free (Tier 3).
-5. **Step 16** last (Tier 4), only if the load screen is worth the risk.
+**ALL STEPS COMPLETE (2026-07-21).** Status:
+- ✅ Step 1 (harness), LE-0 (throttle harness)
+- ✅ Step 2 (photo freeze), Step 4 (finale guard)
+- ✅ LE-1/2/3 (quality manager, auto-governor, Options menu) — HIGH proven pixel-identical
+- ✅ Step 3 (shared drip geometry — pooling deferred, see below)
+- ✅ Steps 5,6 (enemies allocs), 7 (colliders), 8 (mansion), 9 (npcs), 10 (player), 11 (world), 12 (story), 13 (audio)
+- ✅ Step 14 (branchless Bayer, pixel-identical)
+- ✅ Step 16 (parallel preloads) + mote-count tier lever (extra)
+- ⏸️ Step 15 (OutputPass merge) — audited, NOT pixel-identical (chromatic-aberration resamples after tone-map), correctly skipped.
+
+### Final measured results (warm, fast machine — `npm run perf`)
+| metric | before | after |
+|---|---|---|
+| take photo (full album) worst | 37–44 ms | **~13 ms** |
+| finale churn worst | ~12 ms + per-frame GC | **~9.5 ms**, no per-frame alloc |
+| long walk GC worst | 42–169 ms | **~31 ms** (p99 10 ms) |
+| hot-path allocation | 2965 B/frame | **1657 B/frame (−44%)** |
+| baseline / HIGH visuals | — | unchanged (pixel-identical) |
+Weak-machine (6× CPU throttle): long-walk avg 50→44 ms; spawn worst −17%; plus the whole
+adaptive-quality system that auto-scales GPU load on struggling hardware.
+
+### Deferred (risky/large — future dedicated pass)
+- **Enemy rig pooling** (bigger spawn-hitch fix): needs an exhaustively-correct state reset; a
+  wrong reset corrupts a reused enemy. Shipped only the safe geometry-sharing win instead.
+- **Instancing the ~800 procedural world/building meshes** (dock = ~1724 draw calls): a large
+  world.js/mansion.js refactor with visual-parity risk. Repeated foliage is already instanced.
+- **OutputPass→grade merge** (Step 15): not pixel-identical; skipped.
+The adaptive-quality fill-rate levers cover weak GPUs safely without these.
 
 **Same-file sequencing (must not run in parallel):**
 `enemies.js` → Steps 3, 5, 6 (and 7's caller edits). `story.js` → Steps 4, 12.

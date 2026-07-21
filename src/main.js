@@ -20,6 +20,8 @@ import { save } from './save.js';
 import { journal } from './journal.js';
 import { buildMenu } from './menu.js';
 import { buildJournalUI } from './journalui.js';
+import { buildOptionsUI } from './optionsui.js';
+import { quality } from './quality.js';
 
 const params = new URLSearchParams(location.search);
 // ?skipintro / ?newgame → auto-start a fresh run (skip menu + cutscene); the
@@ -33,7 +35,10 @@ journal.load();
 
 // ------------------------------------------------------------------- set up
 const app = document.getElementById('app');
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+// MSAA is fixed at renderer construction, so the quality tier must be consulted
+// BEFORE this call. Only a persisted manual LOW turns it off (reload-only lever);
+// auto/unknown/other tiers keep it on, exactly as today.
+const renderer = new THREE.WebGLRenderer({ antialias: quality.initialAntialias(), powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -45,15 +50,22 @@ app.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(71, window.innerWidth / window.innerHeight, 0.08, 900);
 
-// real 3D assets load before the world is built (title screen shows progress)
+// real 3D assets load before the world is built (title screen shows progress).
+// STEP 16: the three preloads are mutually independent — each writes to its own
+// private cache (assets → GLTF Map, monster → skinTex, NPC → NPCTEX) and shares
+// no in-memory state, so they run CONCURRENTLY via Promise.all instead of back-
+// to-back awaits. The only ordering requirement is that ALL of them finish before
+// the world / NPCs / rigs build below (monster skin maps must be in place before
+// a rig builds — the old first-spawn freeze; NPC wool maps before their bodies),
+// which Promise.all still guarantees. The 28 GLTF models are the bulk of the wait,
+// so they keep driving the visible n/total progress count.
 const startEl = document.getElementById('title-start');
 startEl.textContent = 'LOADING…';
-await preloadAssets((n, total) => { startEl.textContent = `LOADING ${n}/${total}`; });
-// monster skin maps must be in place BEFORE the rigs build, or their
-// material recompiles at first sight of one — the old first-spawn freeze
-await preloadMonsterTextures();
-// NPC wool maps must also be in place before their bodies build
-await preloadNpcTextures();
+await Promise.all([
+  preloadAssets((n, total) => { startEl.textContent = `LOADING ${n}/${total}`; }),
+  preloadMonsterTextures(),
+  preloadNpcTextures(),
+]);
 
 const colliders = new Colliders();
 const audio = new GameAudio();
@@ -213,6 +225,14 @@ startEl.textContent = 'CLICK TO BEGIN';
 // building scene so the title screen becomes visible (auto-start clears it too).
 ui.fade(false);
 
+// Adaptive quality (TIER LE). Wire the sole shadow caster (player's flashlight
+// spot) + the renderer into world so shadows can be scaled, then resolve/apply
+// the active tier. At HIGH this is a no-op — every lever already matches the boot
+// state, so a capable machine renders byte-identically to today. `applyResize`
+// re-runs the resize path after any pixel-ratio change so postfx stays in sync.
+world.attachRenderer(renderer, player.spot);
+quality.init({ renderer, scene, camera, world, fxpipe, applyResize });
+
 // ---------------------------------------------------------------- input
 const input = { f: false, b: false, l: false, r: false, run: false, e: false };
 let state = 'TITLE';   // TITLE | MENU | INTRO | PLAY | PAUSE | DEAD | END
@@ -348,19 +368,23 @@ document.addEventListener('pointerlockchange', () => {
   }
 });
 
-window.addEventListener('resize', () => {
+// The resize path — also re-run by quality.apply() after a pixel-ratio change so
+// the renderer buffer + composer + polaroid capture stay in sync. Declared as a
+// function so it's hoisted for the quality.init() call above.
+function applyResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   fxpipe.setSize(window.innerWidth, window.innerHeight);
-});
+}
+window.addEventListener('resize', applyResize);
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { saveCheckpoint(); if (audio.ctx) audio.ctx.suspend().catch(() => {}); }
+  if (document.hidden) { saveCheckpoint(); journal.flush(); if (audio.ctx) audio.ctx.suspend().catch(() => {}); }
   else if (audio.ctx) audio.ctx.resume().catch(() => {});
 });
 // tab close / refresh: last-chance checkpoint so "interrupt for a while" survives
-window.addEventListener('beforeunload', () => saveCheckpoint());
+window.addEventListener('beforeunload', () => { saveCheckpoint(); journal.flush(); });
 
 // ---------------------------------------------------------------- states
 
@@ -370,17 +394,20 @@ const menu = buildMenu({
   onContinue: () => beginGame(save.read()),
 });
 const journalUI = buildJournalUI({ onBack: closeOverlay });
+const optionsUI = buildOptionsUI({ onBack: closeOverlay });
 
 // pause-screen buttons
 const pauseBtn = (id, fn) => document.getElementById(id)?.addEventListener('click', fn);
 pauseBtn('pause-resume', () => requestLock());
 pauseBtn('pause-journal', () => openOverlay('journal'));
+pauseBtn('pause-options', () => openOverlay('options'));
 pauseBtn('pause-restart', () => { saveCheckpoint(); save.clear(); journal.clear(); location.href = location.pathname + '?newgame'; });
 pauseBtn('pause-menu', () => { saveCheckpoint(); location.href = location.pathname + '?menu'; });
 
-// the journal is also reachable from the main menu; Back returns to whichever
-// screen is underneath (menu or pause) — see overlayUnder below.
+// the journal + options are also reachable from the main menu; Back returns to
+// whichever screen is underneath (menu or pause) — see overlayUnder below.
 document.getElementById('menu-journal')?.addEventListener('click', () => openOverlay('journal'));
+document.getElementById('menu-options')?.addEventListener('click', () => openOverlay('options'));
 
 let overlayUnder = null;    // 'menu' | 'pause' — which screen the overlay is covering
 
@@ -392,10 +419,12 @@ function openOverlay(which) {
   overlayUnder = (state === 'PAUSE') ? 'pause' : 'menu';
   if (overlayUnder === 'pause') ui.showPause(false); else menu.hide();
   if (which === 'journal') journalUI.show();
+  else if (which === 'options') optionsUI.show();
 }
 function closeOverlay() {
   const wasOpen = overlay !== null;
   journalUI.hide();
+  optionsUI.hide();
   overlay = null;
   // Backing out of the journal restores the screen it was covering. Guarded on
   // wasOpen so the defensive closeOverlay() calls in showMenu/beginGame — which
@@ -635,6 +664,12 @@ function frame() {
   }
 
   if (simRunning) {
+    // LE-2 adaptive-quality governor: measures real (unclamped) frame time and,
+    // in auto mode only, steps the tier down when the machine is sustainably
+    // struggling. Called only on the play path so title/pause/dialog rAF gaps
+    // are never mistaken for slowness. No-op in manual mode.
+    quality.observeFrame();
+
     // advance the night's tide/phase (only while the sim runs, so pausing or
     // reading a note never drains the night), then let it drive the world
     night.update(dt, time);
@@ -824,4 +859,4 @@ if (AUTO_START) beginGame(null);
 else if (SHOW_MENU) showMenu();
 
 // debug/testing handle
-window.__niebla = { THREE, scene, camera, renderer, player, story, director, audio, world, buildings, npcs, dialog, fx, night, vignettes, reveals, revisit, save, journal, beginGame, showMenu, saveCheckpoint, skipIntro, get state() { return state; } };
+window.__niebla = { THREE, scene, camera, renderer, player, story, director, audio, world, buildings, npcs, dialog, fx, night, vignettes, reveals, revisit, save, journal, quality, beginGame, showMenu, saveCheckpoint, skipIntro, get state() { return state; } };

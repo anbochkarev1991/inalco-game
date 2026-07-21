@@ -452,10 +452,16 @@ export class Story {
     this.boatStarted = false;
     this.boatProgress = 0;
     this.boatNeed = 20;
+    this._lastBoatLeft = null;   // last countdown value shown; null = force first "engine is catching" issue
+    this._boatAway = false;      // whether "get back to the boat" is currently the shown message
     this.over = false;
     this.staticSpike = 0;
     this.checkpoint = new THREE.Vector3(0, 0, 77.2);
     this.items = [];
+    this._markerItems = [];              // items that own a pulsing marker (built in addItem)
+    this._bestInteract = { item: null, label: null };  // reused by currentInteract — no per-frame literal
+    this._maraNpc = null;                // cached Mara NPC ref (resolved once in update)
+    this._maraWasWalking = false;        // tracks Mara's walk→idle edge for the anchor sync
     this.triggers = [];
     this.holding = null;
     this.holdT = 0;
@@ -860,6 +866,7 @@ export class Story {
       def._marker = makeMarker(def.evidence);
       def._marker.position.set(def.x, def.y + 0.12, def.z);
       this.scene.add(def._marker);
+      this._markerItems.push(def);       // only these get swept for marker pulsing
     }
     def.taken = false;
     this.items.push(def);
@@ -1892,6 +1899,7 @@ export class Story {
 
   startFinale() {
     this.boatStarted = true;
+    this._lastBoatLeft = null; this._boatAway = false;   // fresh trackers each time the finale is entered
     this.checkpoint.set(LAYOUT.boathouse.x - 6, 0, LAYOUT.boathouse.z - 3);
     this.audio.boatSputter();
     this.buildings.lantern.mat.color.setHex(0xffb46b);
@@ -2255,14 +2263,17 @@ export class Story {
   // ------------------------------------------------------------ interaction
   currentInteract(playerPos, camDir) {
     if (this.over) return null;
-    let best = null, bestScore = 1e9;
+    const best = this._bestInteract;     // reused object — callers consume it within the frame
+    let found = false, bestScore = 1e9;
     for (const it of this.items) {
       if (it.taken) continue;
       if (it.available && !it.available()) continue;
       const r = it.radius ?? TUNE.interactRange;
       const dx = it.x - playerPos.x, dz = it.z - playerPos.z;
-      const d = Math.hypot(dx, dz);
-      if (d > r) continue;
+      // squared-distance range test first — only sqrt the in-range survivors
+      const d2 = dx * dx + dz * dz;
+      if (d2 > r * r) continue;
+      const d = Math.sqrt(d2);
       const dy = Math.abs(it.y - (playerPos.y + 1.4));
       if (dy > 2.2) continue;
       // facing: strict at range, lenient point-blank — but never something behind you
@@ -2272,9 +2283,9 @@ export class Story {
       if (!label) continue;
       // prefer what you're looking at over what you're merely near
       const score = d * (1.35 - Math.max(0, dot) * 0.5);
-      if (score < bestScore) { bestScore = score; best = { item: it, label }; }
+      if (score < bestScore) { bestScore = score; best.item = it; best.label = label; found = true; }
     }
-    return best;
+    return found ? best : null;
   }
 
   interact(item) {
@@ -2299,11 +2310,16 @@ export class Story {
     // pinned to her live position, and while a Returned has her, watch for the
     // rescue: photographing it until it dissolves → saved; timer out → taken.
     // Proximity does nothing — only the flash can pull her out of it.
-    const mNpc = this.npcs.byId('mara');
-    if (this._maraItem && this.maraSurvived !== false) {
+    const mNpc = this._maraNpc || (this._maraNpc = this.npcs.byId('mara'));
+    // Mara's anchor only needs re-pinning while she moves; when idle her position
+    // is constant so the cached anchor already matches. Recompute during her walk
+    // plus the one frame she stops (to capture her final resting spot). Non-walk
+    // repositions (load/restore) sync the anchor directly in their own path.
+    if (this._maraItem && this.maraSurvived !== false && mNpc && (mNpc.walking || this._maraWasWalking)) {
       this._maraItem.x = mNpc.x; this._maraItem.z = mNpc.z;
       this._maraItem.y = this.world.groundHeight(mNpc.x, mNpc.z) + 1.0;
     }
+    this._maraWasWalking = !!(mNpc && mNpc.walking);
     this._escortUpdate(dt, playerPos);
 
     // c2 · the lake calls Ana's name at the danger peak near the waterline.
@@ -2321,9 +2337,10 @@ export class Story {
       this._camRecLight.material.opacity = on ? 0.95 : 0.1;
     }
 
-    // markers: a faint breath, not a beacon
+    // markers: a faint breath, not a beacon. Sweep only items that own a marker.
     const tt = performance.now() * 0.003;
-    for (const it of this.items) {
+    for (let i = 0; i < this._markerItems.length; i++) {
+      const it = this._markerItems[i];
       if (it._marker && !it.taken)
         it._marker.material.opacity = 0.045 + (Math.sin(tt + it.x) * 0.5 + 0.5) * 0.09;
     }
@@ -2388,9 +2405,19 @@ export class Story {
           this.audio.boatSputter();
         }
         const left = Math.ceil(this.boatNeed - this.boatProgress);
-        this.setObjective(`The engine is catching... ${left}s`, 'stay close to the boat');
+        // Only re-issue when the shown value actually changes (was 60x/s). journal
+        // already dedupes, but this avoids the per-frame string + object garbage.
+        if (left !== this._lastBoatLeft) {
+          this.setObjective(`The engine is catching... ${left}s`, 'stay close to the boat');
+          this._lastBoatLeft = left;
+        }
+        this._boatAway = false;
       } else {
-        this.setObjective('Get back to the boat!', 'the engine dies without you');
+        if (!this._boatAway) {
+          this.setObjective('Get back to the boat!', 'the engine dies without you');
+          this._boatAway = true;
+          this._lastBoatLeft = null;   // re-issue the countdown on return even if `left` is unchanged
+        }
       }
       if (this.boatProgress >= this.boatNeed) {
         this.over = true;

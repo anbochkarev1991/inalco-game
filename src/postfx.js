@@ -30,16 +30,24 @@ const GradeShader = {
 
     float hash(vec2 p){ p = fract(p*vec2(123.34, 456.21)); p += dot(p, p+45.32); return fract(p.x*p.y); }
 
+    // 4x4 ordered Bayer, computed branchlessly (no loop / no branch / no array).
+    // Reproduces the exact matrix the old table indexed:
+    //    0  8  2 10
+    //   12  4 14  6      via the recursive construction
+    //    3 11  1  9        D2(x,y) = 2*(x^y) + y   (x,y in {0,1})
+    //   15  7 13  5        D4 = 4*D2(xlo,ylo) + D2(xhi,yhi)
+    //                        = 8*(xlo^ylo) + 4*ylo + 2*(xhi^yhi) + yhi
+    // XOR of two 1-bit values is (a+b) mod 2. Everything stays in ints (values
+    // 0..15, exact), so float(d)/16.0 is byte-identical to the old m[i]/16.0
+    // lookup — verified over all 16 cells and real gl_FragCoord coords.
     float bayer(vec2 pix){
       int x = int(mod(pix.x, 4.0)), y = int(mod(pix.y, 4.0));
-      int i = y * 4 + x;
-      float m[16];
-      m[0]=0.0;  m[1]=8.0;  m[2]=2.0;  m[3]=10.0;
-      m[4]=12.0; m[5]=4.0;  m[6]=14.0; m[7]=6.0;
-      m[8]=3.0;  m[9]=11.0; m[10]=1.0; m[11]=9.0;
-      m[12]=15.0;m[13]=7.0; m[14]=13.0;m[15]=5.0;
-      for(int k=0;k<16;k++){ if(k==i) return m[k]/16.0; }
-      return 0.0;
+      int xlo = x - (x / 2) * 2, ylo = y - (y / 2) * 2;
+      int xhi = x / 2,           yhi = y / 2;
+      int exy = (xlo + ylo) - ((xlo + ylo) / 2) * 2;
+      int exh = (xhi + yhi) - ((xhi + yhi) / 2) * 2;
+      int d = 8 * exy + 4 * ylo + 2 * exh + yhi;
+      return float(d) / 16.0;
     }
 
     void main(){
@@ -113,12 +121,32 @@ export function createPostFX(renderer, scene, camera) {
 
   const fx = { staticVis: 0, glitch: 0, flash: 0, damage: 0 };
 
+  // adaptive-quality bloom lever (LE-1). Defaults leave bloom exactly as built
+  // (enabled, full internal resolution) — parity with today. `_size` tracks the
+  // live composer size so a later setBloom can re-scale relative to it.
+  const _size = size.clone();
+  let _bloomRes = 1.0;
+
   return {
     composer,
     fx,
     setSize(w, h) {
-      composer.setSize(w, h);
+      _size.set(w, h);
+      composer.setSize(w, h);      // resets every pass (incl. bloom) to full size
       grade.uniforms.uRes.value.set(w, h);
+      // re-apply a sub-full bloom resolution that composer.setSize just cleared
+      if (_bloomRes !== 1.0) {
+        bloom.setSize(Math.max(1, Math.round(w * _bloomRes)), Math.max(1, Math.round(h * _bloomRes)));
+      }
+    },
+    // LE-1 lever: toggle whether UnrealBloom participates (EffectComposer skips a
+    // disabled pass — no remove/re-add, no scene-material recompile) and set its
+    // internal render resolution. resScale 1.0 = full (today); 0.5 = half res.
+    setBloom(enabled, resScale = 1.0) {
+      bloom.enabled = enabled !== false;
+      _bloomRes = resScale > 0 ? resScale : 1.0;
+      // resize the bloom's own render targets; leaves scene materials untouched
+      bloom.setSize(Math.max(1, Math.round(_size.x * _bloomRes)), Math.max(1, Math.round(_size.y * _bloomRes)));
     },
     render(dt, time) {
       // decay transient effects

@@ -1380,7 +1380,8 @@ export function buildWorld(scene, colliders) {
     s.scale.set(w, w * 0.36, 1);
     const baseY = gy + 1.0 + Math.random() * 0.9;
     s.position.set(x, baseY, z);
-    s.userData = { vx: 0.1 + Math.random() * 0.2, ph: Math.random() * 9, baseY };
+    const ud = s.userData;                          // mutate in place — no new literal per recycle
+    ud.vx = 0.1 + Math.random() * 0.2; ud.ph = Math.random() * 9; ud.baseY = baseY;
   };
   for (let i = 0; i < 70; i++) {
     const s = new THREE.Sprite(fogMat);
@@ -1401,6 +1402,14 @@ export function buildWorld(scene, colliders) {
   const _baseMoonCol = new THREE.Color(PAL.moon).multiplyScalar(2.2);
   const _lightDir = new THREE.Vector3();
   let dawnAmt = 0;
+  let _lastPh = -1;   // last phase applied by setNightPhase; used to skip sub-pixel recomputes
+
+  // adaptive-quality (LE-1) state. Defaults reproduce today's look exactly:
+  // full fog density, and no renderer/shadow-light attached until main wires it.
+  let _renderer = null;        // set via attachRenderer — needed to stop the shadow pass
+  let _shadowLight = null;     // the sole shadow caster (player's flashlight spot)
+  let _fogDensityScale = 1;    // multiplies the density setFogLevel computes
+  let _lastTide = 0;           // last tide fed to setFogLevel (for live re-apply)
 
   const api = {
     groundHeight,
@@ -1415,6 +1424,13 @@ export function buildWorld(scene, colliders) {
     // first light. Called each sim frame; no per-frame allocation.
     setNightPhase(phase) {
       const ph = phase < 0 ? 0 : phase > 1 ? 1 : phase;
+      // The moon advances only a sub-pixel arc per frame, yet this recomputes the
+      // whole arc (normalize + two lookAt + rotateZ) and ~4 colour lerps. Skip when
+      // the phase hasn't moved enough to shift a pixel or an 8-bit colour step; the
+      // skipped delta is below one screen pixel of moon travel / one 1/255 colour
+      // step (verified by night-phase timelapse). First call (_lastPh<0) always runs.
+      if (_lastPh >= 0 && Math.abs(ph - _lastPh) < 1e-4) return;
+      _lastPh = ph;
       // the moon arc: altitude high → grazing the horizon; azimuth drifts from
       // over the lake toward the west as it sets.
       const alt = lerp(0.95, 0.05, smoothstep(0.0, 1.0, ph));
@@ -1449,30 +1465,87 @@ export function buildWorld(scene, colliders) {
     // crossable as first light arrives — the diegetic "the fog is thinning" beat.
     setFogLevel(tide) {
       const t = tide < 0 ? 0 : tide > 1 ? 1 : tide;
+      _lastTide = t;
       const clear = 1 - 0.55 * dawnAmt;
-      scene.fog.density = TUNE.fogDensity * (0.9 + 0.5 * t) * clear;
+      // LE-1: _fogDensityScale is 1.0 at HIGH (unchanged); MEDIUM/LOW thin the fog.
+      scene.fog.density = TUNE.fogDensity * (0.9 + 0.5 * t) * clear * _fogDensityScale;
       fogMat.opacity = FOG_BANK_BASE * (0.85 + 0.7 * t) * clear;
       skyUniforms.uVeil.value = (0.9 + 0.45 * t) * (1 - 0.7 * dawnAmt);
+    },
+    // ---- adaptive-quality levers (LE-1). Additive: untouched at HIGH.
+    // main wires the renderer + the sole shadow-casting light (player's spot) so
+    // shadows can be scaled without world owning either.
+    attachRenderer(renderer, shadowLight) {
+      _renderer = renderer || null;
+      _shadowLight = shadowLight || null;
+    },
+    // Shadow OFF: stop the render pass (renderer.shadowMap.enabled=false makes
+    // WebGLShadowMap.render early-return) AND clear the caster's castShadow. No
+    // material.needsUpdate en masse — any reprogram is lazy + one-time, not a
+    // forced mass recompile.
+    setShadows(enabled) {
+      if (_renderer) _renderer.shadowMap.enabled = !!enabled;
+      if (_shadowLight) _shadowLight.castShadow = !!enabled;
+    },
+    // Resize the shadow map: set mapSize then drop the baked map so three rebuilds
+    // it at the new size on the next shadow render. mapSize is not a shader define,
+    // so this costs no material recompile.
+    setShadowMapSize(n) {
+      if (!_shadowLight) return;
+      _shadowLight.shadow.mapSize.set(n, n);
+      if (_shadowLight.shadow.map) {
+        _shadowLight.shadow.map.dispose();
+        _shadowLight.shadow.map = null;
+      }
+    },
+    // Scale down how many of the fog banks draw. Reuses the existing sprites —
+    // just toggles .visible; positions still advance in update() so raising the
+    // count again shows already-placed banks (never rebuilds geometry).
+    setFogSpriteCount(n) {
+      const k = Math.max(0, Math.min(fogBanks.length, n | 0));
+      for (let i = 0; i < fogBanks.length; i++) fogBanks[i].visible = i < k;
+    },
+    // Multiply the scene fog density by a tier scale (1.0 / 0.9 / 0.8). Re-applies
+    // immediately from the last tide so a tier switch takes effect even if the sim
+    // is paused and setFogLevel isn't ticking.
+    setFogDensityScale(scale) {
+      _fogDensityScale = scale > 0 ? scale : 1;
+      const clear = 1 - 0.55 * dawnAmt;
+      scene.fog.density = TUNE.fogDensity * (0.9 + 0.5 * _lastTide) * clear * _fogDensityScale;
+    },
+    // Scale down how many dust motes DRAW — the motes are additive/transparent
+    // Points, so on a weak GPU their fill-rate overdraw is a real cost. Clamp the
+    // geometry's draw range instead of rebuilding/disposing anything; positions
+    // still advance in update() for all MOTES, so raising the count again shows
+    // current drift. HIGH = MOTES (all 300, which is also the geometry's default
+    // draw range) → apply() never calls this at HIGH, so the beam is pixel-
+    // identical to today; MEDIUM/LOW draw fewer.
+    setMoteCount(n) {
+      const k = Math.max(0, Math.min(MOTES, n | 0));
+      moteGeo.setDrawRange(0, k);
     },
     update(dt, time, playerPos) {
       skyUniforms.uTime.value = time;
       lakeUniforms.uTime.value = time;
       lakeUniforms.uCam.value.copy(playerPos);
       windTime.value = time;
-      for (const s of fogBanks) {
-        s.position.x += s.userData.vx * dt;
-        s.position.y = s.userData.baseY + Math.sin(time * 0.14 + s.userData.ph) * 0.35;
+      for (let i = 0; i < fogBanks.length; i++) {   // indexed loop: no iterator alloc
+        const s = fogBanks[i], ud = s.userData;
+        s.position.x += ud.vx * dt;
+        s.position.y = ud.baseY + Math.sin(time * 0.14 + ud.ph) * 0.35;
         const dx = s.position.x - playerPos.x, dz = s.position.z - playerPos.z;
         if (dx * dx + dz * dz > 68 * 68) placeBank(s, playerPos.x, playerPos.z, false);
       }
       motes.position.set(playerPos.x, playerPos.y - 1, playerPos.z);
       const a = moteGeo.getAttribute('position');
+      const arr = a.array;                          // index the backing Float32Array directly
       for (let i = 0; i < MOTES; i++) {
-        let x = a.getX(i) + mVel[i].x * dt, y = a.getY(i) + mVel[i].y * dt, z = a.getZ(i) + mVel[i].z * dt;
+        const b = i * 3, v = mVel[i];
+        let x = arr[b] + v.x * dt, y = arr[b + 1] + v.y * dt, z = arr[b + 2] + v.z * dt;
         if (x > RANGE) x = -RANGE; if (x < -RANGE) x = RANGE;
         if (z > RANGE) z = -RANGE; if (z < -RANGE) z = RANGE;
         if (y > 5) y = 0; if (y < 0) y = 5;
-        a.setXYZ(i, x, y, z);
+        arr[b] = x; arr[b + 1] = y; arr[b + 2] = z;
       }
       a.needsUpdate = true;
     },

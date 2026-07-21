@@ -101,53 +101,130 @@ function painting(x, y, z, ry, seed, s = 1) {
 
 // old stone, stained. Dark red drips, spatter, a dragged handprint or two, and
 // a word scratched into the wall by someone who had a lot of time down here.
-function bloodStoneTex() {
-  return canvasTexture((c, W, H) => {
-    // stone base
-    c.fillStyle = '#4a4744'; c.fillRect(0, 0, W, H);
-    for (let i = 0; i < 900; i++) {
-      const g = 40 + Math.random() * 44;
-      c.fillStyle = `rgba(${g},${g - 3},${g - 6},${0.15 + Math.random() * 0.25})`;
-      c.fillRect(Math.random() * W, Math.random() * H, 1 + Math.random() * 3, 1 + Math.random() * 3);
+// The cellar walls: cold, damp, mould-eaten cut stone. Instead of a regular
+// brick grid on a flat fill (which read like a child's drawing), the stones are
+// laid in irregular courses of jittered size and shade, seamed with near-black
+// damp mortar, then bled over with water stains, mould, seep and sparse old
+// blood. A matching relief map (drawCellarBump) is generated from the SAME block
+// layout so the failing bulb throws real shadow into the joints.
+function drawCellarAlbedo(c, W, H, blocks) {
+  // near-black damp mortar shows through the gaps between stones
+  c.fillStyle = '#10140e'; c.fillRect(0, 0, W, H);
+  // broad tonal blotches so the wall never reads as one flat colour
+  for (let i = 0; i < 40; i++) {
+    const x = Math.random() * W, y = Math.random() * H, r = 50 + Math.random() * 150;
+    const g = c.createRadialGradient(x, y, 1, x, y, r);
+    const col = Math.random() > 0.5 ? '10,16,11' : '44,56,42';
+    g.addColorStop(0, `rgba(${col},${0.16 + Math.random() * 0.2})`);
+    g.addColorStop(1, `rgba(${col},0)`);
+    c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
+  }
+  // irregular cold-green stones with a carved top-light / bottom-shadow
+  for (const b of blocks) {
+    const bx = b.x + 2, by = b.y + 2, bw = b.w - 4, bh = b.h - 4;
+    const g = (44 + Math.random() * 18) * b.shade;      // green-dominant, per-stone
+    c.fillStyle = `rgb(${(g * 0.72) | 0},${g | 0},${(g * 0.76) | 0})`;
+    c.fillRect(bx, by, bw, bh);
+    c.fillStyle = 'rgba(150,175,140,0.05)'; c.fillRect(bx, by, bw, 2);        // catch-light
+    c.fillStyle = 'rgba(0,0,0,0.32)'; c.fillRect(bx, by + bh - 2, bw, 2);     // drop shadow
+    for (let s = 0; s < 22; s++) {                       // pitting / mineral speckle
+      const v = Math.random();
+      const t = v > 0.72 ? 80 + Math.random() * 45 : 18 + Math.random() * 26;
+      c.fillStyle = `rgba(${(t * 0.8) | 0},${t | 0},${(t * 0.72) | 0},${0.1 + Math.random() * 0.18})`;
+      c.fillRect(bx + Math.random() * bw, by + Math.random() * bh, 1 + Math.random() * 2, 1 + Math.random() * 2);
     }
-    // mortar courses
-    c.strokeStyle = 'rgba(18,16,14,0.6)'; c.lineWidth = 3;
-    for (let y = 26; y < H; y += 52) {
-      c.beginPath(); c.moveTo(0, y); c.lineTo(W, y); c.stroke();
-      const off = (Math.floor(y / 52) % 2) * 48;
-      for (let x = off; x < W; x += 96) { c.beginPath(); c.moveTo(x, y); c.lineTo(x, y + 52); c.stroke(); }
+  }
+  // water bleeding straight down from the ceiling line
+  for (let i = 0; i < 16; i++) {
+    const x = Math.random() * W, w = 6 + Math.random() * 26, len = 80 + Math.random() * 260;
+    const g = c.createLinearGradient(x, 0, x, len);
+    g.addColorStop(0, 'rgba(8,14,10,0.5)'); g.addColorStop(1, 'rgba(8,14,10,0)');
+    c.fillStyle = g; c.fillRect(x - w / 2, 0, w, len);
+  }
+  // mould / mildew blotches, biased low and toward the joints
+  for (let i = 0; i < 60; i++) {
+    const x = Math.random() * W, y = H * (0.3 + Math.random() * 0.7), r = 8 + Math.random() * 40;
+    const g = c.createRadialGradient(x, y, 1, x, y, r);
+    const moss = Math.random() > 0.55 ? '104,126,52' : '58,80,44';   // sickly vs deep moss
+    g.addColorStop(0, `rgba(${moss},${0.12 + Math.random() * 0.22})`);
+    g.addColorStop(0.6, `rgba(${moss},${0.05 + Math.random() * 0.1})`);
+    g.addColorStop(1, `rgba(${moss},0)`);
+    c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
+  }
+  // dark damp rising off the floor
+  const seep = c.createLinearGradient(0, H, 0, H * 0.55);
+  seep.addColorStop(0, 'rgba(6,10,7,0.7)'); seep.addColorStop(1, 'rgba(6,10,7,0)');
+  c.fillStyle = seep; c.fillRect(0, H * 0.55, W, H * 0.45);
+  // sparse, old, oxidised blood — dread, not decoration
+  const blood = (a) => `rgba(${64 + Math.random() * 22 | 0},${10 + Math.random() * 8 | 0},${8 + Math.random() * 6 | 0},${a})`;
+  for (let i = 0; i < 5; i++) {
+    const x = Math.random() * W, y0 = Math.random() * H * 0.5, len = 30 + Math.random() * 120;
+    c.strokeStyle = blood(0.35 + Math.random() * 0.3); c.lineWidth = 1.5 + Math.random() * 4;
+    c.beginPath(); c.moveTo(x, y0); c.lineTo(x + (Math.random() - 0.5) * 10, y0 + len); c.stroke();
+  }
+  for (let i = 0; i < 70; i++) {
+    c.fillStyle = blood(0.2 + Math.random() * 0.35);
+    c.beginPath(); c.arc(Math.random() * W, Math.random() * H, Math.random() * 2.5 + 0.4, 0, 7); c.fill();
+  }
+  // clawed gouges scored into the stone (replacing the old lettered word)
+  for (let gset = 0; gset < 3; gset++) {
+    const ox = W * (0.1 + Math.random() * 0.7), oy = H * (0.2 + Math.random() * 0.5);
+    const ang = -0.5 + Math.random() * 0.4, dx = Math.sin(ang) * 40, dy = Math.cos(ang) * 40;
+    for (let k = 0; k < 4; k++) {
+      const sx = ox + k * 7, sy = oy;
+      c.strokeStyle = 'rgba(0,0,0,0.4)'; c.lineWidth = 1.4;               // dark groove
+      c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx + dx, sy + dy); c.stroke();
+      c.strokeStyle = `rgba(150,165,140,${0.12 + Math.random() * 0.1})`;  // pale scored edge
+      c.lineWidth = 0.8;
+      c.beginPath(); c.moveTo(sx + 1, sy); c.lineTo(sx + 1 + dx, sy + dy); c.stroke();
     }
-    // damp darkening in the corners
-    const vg = c.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, W * 0.7);
-    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.5)');
-    c.fillStyle = vg; c.fillRect(0, 0, W, H);
-    // blood: dark, oxidised
-    const blood = (a) => `rgba(${86 + Math.random() * 30 | 0},${8 + Math.random() * 8 | 0},${6 + Math.random() * 6 | 0},${a})`;
-    // long drips
-    for (let i = 0; i < 14; i++) {
-      const x = Math.random() * W, y0 = Math.random() * H * 0.5, len = 40 + Math.random() * 180;
-      c.strokeStyle = blood(0.5 + Math.random() * 0.4); c.lineWidth = 2 + Math.random() * 6;
-      c.beginPath(); c.moveTo(x, y0); c.lineTo(x + (Math.random() - 0.5) * 14, y0 + len); c.stroke();
-      c.fillStyle = blood(0.6); c.beginPath(); c.arc(x, y0 + len, c.lineWidth * 0.9, 0, 7); c.fill();
+  }
+  // damp darkening toward the edges
+  const vg = c.createRadialGradient(W / 2, H / 2, H * 0.28, W / 2, H / 2, W * 0.72);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.45)');
+  c.fillStyle = vg; c.fillRect(0, 0, W, H);
+}
+
+// Grayscale relief for the wall bumpMap, drawn from the SAME block layout as the
+// albedo so joints, proud faces and pitting line up: mortar recessed (dark),
+// stone faces proud (light), with a lit top edge and shadowed sides.
+function drawCellarBump(c, W, H, blocks) {
+  c.fillStyle = '#242424'; c.fillRect(0, 0, W, H);      // deep mortar = recessed
+  for (const b of blocks) {
+    const bx = b.x + 2, by = b.y + 2, bw = b.w - 4, bh = b.h - 4;
+    const face = 140 + (b.shade - 1) * 40;
+    c.fillStyle = `rgb(${face | 0},${face | 0},${face | 0})`;
+    c.fillRect(bx, by, bw, bh);
+    c.fillStyle = 'rgba(255,255,255,0.5)'; c.fillRect(bx, by, bw, 2);       // proud top edge
+    c.fillStyle = 'rgba(0,0,0,0.6)'; c.fillRect(bx, by + bh - 2, bw, 2);    // recessed bottom
+    c.fillStyle = 'rgba(0,0,0,0.5)'; c.fillRect(bx, by, 2, bh);             // recessed side
+    for (let s = 0; s < 30; s++) {                                          // surface pitting
+      const v = Math.random() > 0.5 ? 205 : 70;
+      c.fillStyle = `rgba(${v},${v},${v},0.14)`;
+      c.fillRect(bx + Math.random() * bw, by + Math.random() * bh, 1 + Math.random() * 2, 1 + Math.random() * 2);
     }
-    // spatter
-    for (let i = 0; i < 240; i++) {
-      c.fillStyle = blood(0.35 + Math.random() * 0.5);
-      const r = Math.random() * 4 + 0.5;
-      c.beginPath(); c.arc(Math.random() * W, Math.random() * H, r, 0, 7); c.fill();
+  }
+}
+
+// Build (once) the shared block layout and both textures for the cellar walls.
+let _cellarWall = null;
+function cellarWallTextures() {
+  if (_cellarWall) return _cellarWall;
+  const W = 512, H = 512, blocks = [];
+  for (let y = -8; y < H + 8;) {                          // irregular courses...
+    const rh = 30 + Math.random() * 26;
+    for (let x = -Math.random() * 70; x < W;) {           // ...of jittered stones
+      const bw = 40 + Math.random() * 80;
+      blocks.push({ x, y, w: bw, h: rh, shade: 0.72 + Math.random() * 0.56 });
+      x += bw - 3 + Math.random() * 6;
     }
-    // a dragged handprint smear
-    c.fillStyle = blood(0.45);
-    c.save(); c.translate(W * 0.68, H * 0.55); c.rotate(0.3);
-    c.fillRect(-26, -34, 52, 60);
-    for (let f = 0; f < 4; f++) c.fillRect(-24 + f * 13, -58, 9, 30);
-    c.restore();
-    // scratched word
-    c.strokeStyle = 'rgba(20,10,8,0.8)'; c.lineWidth = 2;
-    c.font = 'bold 40px Georgia'; c.fillStyle = blood(0.7);
-    c.save(); c.translate(W * 0.16, H * 0.34); c.rotate(-0.05);
-    c.fillText('COLD', 0, 0); c.restore();
-  }, 512, 512);
+    y += rh - 3 + Math.random() * 6;
+  }
+  const map = canvasTexture((c) => drawCellarAlbedo(c, W, H, blocks), W, H);
+  const bump = canvasTexture((c) => drawCellarBump(c, W, H, blocks), W, H);
+  for (const t of [map, bump]) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  _cellarWall = { map, bump };
+  return _cellarWall;
 }
 
 // The cellar girl's behaviour controller. The MESH — a sculpted, painted-face
@@ -379,7 +456,8 @@ export function buildBuildings(scene, colliders) {
   const doors = {};
   const anchors = {};
   const lamps = [];        // {light, bulbMat, base}
-  const glowPlanes = [];
+  const glowPlanes = [];   // glow materials (opacity flicker)
+  const glowMeshes = [];   // the glow meshes themselves (visibility toggled with power)
   let power = false;
 
   // House walls + furniture live one storey above the under-house cellar, so
@@ -575,6 +653,7 @@ export function buildBuildings(scene, colliders) {
       new THREE.MeshBasicMaterial({ color: 0xffb46b, transparent: true, opacity: 0.4 }));
     glow.position.z = -0.06; glow.visible = false;         // interior side; doesn't block the view
     glowPlanes.push(glow.material);
+    glowMeshes.push(glow);
     glow.userData.isGlow = true;
     g.add(frameTop, frameBot, frameL, frameR, glassP, cross1, cross2, sill, header, shL, shR, glow);
     house.add(g);
@@ -870,10 +949,14 @@ export function buildBuildings(scene, colliders) {
   // =====================================================================
   const C = CELLAR;
   const cel = new THREE.Group(); scene.add(cel);
-  const bloodMat = new THREE.MeshStandardMaterial({ map: bloodStoneTex(), roughness: 0.97, metalness: 0 });
-  bloodMat.map.wrapS = bloodMat.map.wrapT = THREE.RepeatWrapping;
-  bloodMat.map.repeat.set(1.6, 0.9);
-  const celStone = new THREE.MeshStandardMaterial({ map: stoneTex(), color: 0x6a6560, roughness: 0.96, metalness: 0 });
+  const cw = cellarWallTextures();
+  const bloodMat = new THREE.MeshStandardMaterial({
+    map: cw.map, bumpMap: cw.bump, bumpScale: 0.05,
+    color: 0xd6ded0,                                   // faint cool-green wash over the stone
+    roughness: 0.99, metalness: 0,
+  });
+  cw.map.repeat.set(1.7, 1.0); cw.bump.repeat.set(1.7, 1.0);
+  const celStone = new THREE.MeshStandardMaterial({ map: stoneTex(), color: 0x4c5546, roughness: 0.97, metalness: 0 });
   const wallB = (w, h, d, x, y, z) => { cel.add(box(w, h, d, bloodMat, x, y, z)); };
   const rCx = (C.roomMinX + C.roomMaxX) / 2, rCz = (C.roomMinZ + C.roomMaxZ) / 2;
   const rW = C.roomMaxX - C.roomMinX, rD = C.roomMaxZ - C.roomMinZ;
@@ -1375,10 +1458,13 @@ export function buildBuildings(scene, colliders) {
     for (const m of glowPlanes) { /* toggled in update for flicker-on */ }
   }
 
+  // All doors exist by now; cache the value list so update() doesn't rebuild it every frame.
+  const doorList = Object.values(doors);
+
   let t = 0;
   function update(dt) {
     t += dt;
-    for (const d of Object.values(doors)) d.update(dt);
+    for (const d of doorList) d.update(dt);
     piano.update(dt);
     for (let i = 0; i < lamps.length; i++) {
       const l = lamps[i];
@@ -1395,8 +1481,9 @@ export function buildBuildings(scene, colliders) {
       }
     }
     for (const g of glowPlanes) g.opacity = power ? 0.75 + Math.sin(t * 9.1) * 0.08 : 0;
-    // window glow visibility
-    house.traverse((o) => { if (o.userData.isGlow) o.visible = power; });
+    // window glow visibility — toggle the collected glow meshes directly instead
+    // of walking the whole mansion scene graph (+ allocating a closure) each frame
+    for (const g of glowMeshes) g.visible = power;
   }
 
   // ---- checkpoint save/restore: power, door open/lock states, piano, chain ----
