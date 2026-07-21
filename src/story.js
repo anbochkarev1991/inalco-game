@@ -709,14 +709,14 @@ export class Story {
     } else {
       this._escort = {
         active: true, count: 0, max: MARA_ESCORT_MAX, enemy: null,
-        timer: 0, LIMIT: 13, cooldown: 6, savedObj: this._obj ? { ...this._obj } : null,
+        timer: 0, LIMIT: 18, cooldown: 6, savedObj: this._obj ? { ...this._obj } : null,
       };
       // clear whatever was already chasing and hold ambient spawns for the
       // episode, so a new player faces one clean threat at a time, not a mob.
       this.director.clearAll();
       this.director.suppressSpawns = true;
       npc.walkTo(MARA_ROUTE_BOAT, { settle: 'standing', finalYaw: 0 });
-      this.setObjective('Get Mara to the boat', 'stay close — flash whatever reaches for her');
+      this.setObjective('Get Mara to the boat', 'keep your camera ready — the flash is all that saves her');
     }
     if (fate === 'taken') {
       this.staticSpike = Math.max(this.staticSpike, 0.8);
@@ -734,11 +734,11 @@ export class Story {
     if (!esc || !esc.active) return;
     const npc = this.npcs.byId('mara');
     if (esc.enemy) {
-      // an attack is live: flash-dissolved OR Ana reaches her → saved; timeout → taken
+      // an attack is live: the ONLY rescue is photographing the Returned until it
+      // dissolves. Ana's mere presence does nothing — being close can't save Mara.
       esc.timer += dt;
       const gone = esc.enemy.state === 'dying' || !this.director.enemies.includes(esc.enemy);
-      const reached = Math.hypot(playerPos.x - npc.x, playerPos.z - npc.z) < 3.6;
-      if (gone || reached) this._maraAttackerBeaten();
+      if (gone) this._maraAttackerBeaten();
       else if (esc.timer > esc.LIMIT) this.loseMara();
     } else if (!npc.walking) {
       this.finishEscort();                              // she made it to the boat
@@ -755,7 +755,20 @@ export class Story {
     const npc = this.npcs.byId('mara');
     esc.count++;
     npc.pauseWalk();                                    // she stops, caught
-    const bx = npc.x - 4.0 + (Math.random() - 0.5) * 2.4, bz = npc.z - 3.0 + (Math.random() - 0.5) * 2.4;
+    // Spawn the Returned WELL BACK from her (was ~5 m, right on top of her): 10–13 m
+    // out on her open flank + a few metres behind, so it's ~11–14 m away and the
+    // player sees it coming out of the fog with time to raise the camera. Placed on
+    // the side AWAY from the greenhouse and clamped off the water, so it always lands
+    // on open shore in view — never inside the glasshouse or out on the lake.
+    let hx = -1, hz = 0;                                // her heading down the route
+    const tgt = npc._route && npc._route[npc._wp];
+    if (tgt) { hx = tgt.x - npc.x; hz = tgt.z - npc.z; const hl = Math.hypot(hx, hz) || 1; hx /= hl; hz /= hl; }
+    let px = -hz, pz = hx;                              // perpendicular — her flank
+    if (px * (npc.x - LAYOUT.green.x) + pz * (npc.z - LAYOUT.green.z) < 0) { px = -px; pz = -pz; }  // the open side
+    const outr = 10 + Math.random() * 3, back = 2 + Math.random() * 3;
+    const bx = npc.x + px * outr - hx * back;
+    let bz = npc.z + pz * outr - hz * back;
+    bz = Math.min(bz, LAYOUT.shoreZ - 3);              // keep it off the water
     esc.enemy = this.director.spawnAbductor('doble', bx, bz, npc);
     esc.timer = 0;
     this.audio.scream(0, 'doble');
@@ -763,7 +776,7 @@ export class Story {
     this.staticSpike = Math.max(this.staticSpike, 0.55);
     const lines = ['Ana — ANA — get it OFF me—!', 'It’s here, it’s right here—!', 'Don’t let it — please—!', 'Behind me — BEHIND me—!'];
     this.ui.say('MARA VIDAL', lines[(esc.count - 1) % lines.length], 3.2);
-    this.setObjective('Something has Mara', 'flash it — or reach her — before it takes her');
+    this.setObjective('Something has Mara', 'flash it until it dissolves — before it takes her');
   }
 
   // one attacker driven off — she walks on; the next may come after a cooldown
@@ -779,8 +792,8 @@ export class Story {
     this.audio.pickup();
     this.ui.say('MARA VIDAL', esc.count >= esc.max
       ? 'That’s — I think that’s all of them. Keep going, keep going.'
-      : 'Gone. Stay close to me — there may be more.', 3.2);
-    this.setObjective('Get Mara to the boat', 'stay close — flash whatever reaches for her');
+      : 'Gone. Keep that camera up — there may be more.', 3.2);
+    this.setObjective('Get Mara to the boat', 'keep your camera ready — the flash is all that saves her');
     this.updateSide();
   }
 
@@ -816,7 +829,7 @@ export class Story {
     this.audio.scream(0, 'doble');
     this.ui.say('', '(Mara’s headlamp hits the shingle, still lit. The beach is empty.)', 4.4);
     if (esc.savedObj) this.setObjective(esc.savedObj.main, esc.savedObj.sub);
-    else this.setObjective('Get to the boat', 'you couldn’t reach her — go, before first light');
+    else this.setObjective('Get to the boat', 'the flash came too late — go, before first light');
     this.updateSide();
   }
   startEliseoQuest() { if (this.eliseoQuest === 0) this.eliseoQuest = 1; this.updateSide(); }
@@ -2284,7 +2297,8 @@ export class Story {
 
     // Part B · Mara's walk + the shore ambush. Keep the "talk to Mara" anchor
     // pinned to her live position, and while a Returned has her, watch for the
-    // rescue: dissolved (flash) OR Ana reaches her → saved; timer out → taken.
+    // rescue: photographing it until it dissolves → saved; timer out → taken.
+    // Proximity does nothing — only the flash can pull her out of it.
     const mNpc = this.npcs.byId('mara');
     if (this._maraItem && this.maraSurvived !== false) {
       this._maraItem.x = mNpc.x; this._maraItem.z = mNpc.z;
@@ -2415,7 +2429,7 @@ export class Story {
     if (this.met.mara) {
       if (this.maraSurvived === false) {
         // she was taken on the shore path, walking to the boat
-        ep.push('The thing on the shore reached Mara before you did.' +
+        ep.push('The thing on the shore reached Mara before your flash could.' +
           (this.maraFate === 'taken'
             ? ' The tape\nwent into the water with her — warm for a moment, then\nnot.'
             : ' Her headlamp\nis still up on the shingle somewhere, burning down to\nnothing.') +

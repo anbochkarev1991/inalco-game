@@ -1373,8 +1373,9 @@ class Rumor {
       case 'abduct': {
         // hunt the prey NPC (Mara), not Ana. Approach at a slow, dread pace and
         // then LOOM over her — the story's rescue timer decides her fate, so the
-        // player gets a fair window to flash it or reach her. The flash dissolves
-        // it via the normal exposeToFlash path.
+        // player gets a fair window to photograph it. The flash is the only thing
+        // that saves her: enough exposures dissolve it via the normal
+        // exposeToFlash path. Being near it does nothing.
         if (!this.prey) { this.setState('wander'); break; }
         const toPrey = new THREE.Vector3(this.prey.x - this.pos.x, 0, this.prey.z - this.pos.z);
         const pd = toPrey.length();
