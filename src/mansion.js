@@ -1550,8 +1550,13 @@ export function buildBuildings(scene, colliders) {
   bh.add(spawn('wooden_crate_02', { x: 3.55, y: 0.52, z: -2.7, ry: 0.5 }));
   bh.add(spawn('old_military_crate', { x: -3.4, z: 1.9, ry: -0.2 }));
   colliders.addBox(B.x - 3.4, B.z + 1.9, 1.1, 0.7, { blocksSight: false });
-  const buoy = spawn('lifebuoy', { x: -4.38, y: 1.7, z: 0.6 });
-  buoy.rotation.z = Math.PI / 2;   // hung on the west wall
+  // Hung FLAT on the west wall. The model's ring lies in its XY plane with the
+  // flat faces along ±Z (thickness ~0.155 in Z), so it must be turned about Y —
+  // NOT Z — to face into the room; a Z-turn only spins it in place and leaves
+  // ~0.42 m of ring punching straight through the wall. Pulled proud of the wall
+  // inner face (x -4.41) and placed clear of the life vests below it.
+  const buoy = spawn('lifebuoy', { x: -4.30, y: 1.7, z: 1.6 });
+  buoy.rotation.y = Math.PI / 2;   // ring faces +x, into the boathouse
   bh.add(buoy);
   // oars leaning on the north wall
   for (const [lx, rz] of [[-1.0, 0.22], [-1.35, 0.3]]) {

@@ -761,21 +761,46 @@ export class Story {
     const npc = this.npcs.byId('mara');
     esc.count++;
     npc.pauseWalk();                                    // she stops, caught
-    // Spawn the Returned WELL BACK from her (was ~5 m, right on top of her): 10–13 m
-    // out on her open flank + a few metres behind, so it's ~11–14 m away and the
-    // player sees it coming out of the fog with time to raise the camera. Placed on
-    // the side AWAY from the greenhouse and clamped off the water, so it always lands
-    // on open shore in view — never inside the glasshouse or out on the lake.
-    let hx = -1, hz = 0;                                // her heading down the route
-    const tgt = npc._route && npc._route[npc._wp];
-    if (tgt) { hx = tgt.x - npc.x; hz = tgt.z - npc.z; const hl = Math.hypot(hx, hz) || 1; hx /= hl; hz /= hl; }
-    let px = -hz, pz = hx;                              // perpendicular — her flank
-    if (px * (npc.x - LAYOUT.green.x) + pz * (npc.z - LAYOUT.green.z) < 0) { px = -px; pz = -pz; }  // the open side
-    const outr = 10 + Math.random() * 3, back = 2 + Math.random() * 3;
-    const bx = npc.x + px * outr - hx * back;
-    let bz = npc.z + pz * outr - hz * back;
-    bz = Math.min(bz, LAYOUT.shoreZ - 3);              // keep it off the water
-    esc.enemy = this.director.spawnAbductor('doble', bx, bz, npc);
+    // Place the Returned so the player ALWAYS sees it. The whole escort is
+    // "photograph the thing before it takes her" — impossible if it spawns
+    // off-screen. The old placement put it on Mara's LATERAL flank, which is
+    // ~90° to the side of anyone walking behind her, so it reliably spawned out
+    // of view (the "invisible second monster" bug). Now it lands inside the
+    // player's forward view cone, biased toward Mara, on dry ground with a clear
+    // line of sight (no wall between player and it), 6–15 m out.
+    const P = this.player.pos;
+    const fwdX = -Math.sin(this.player.yaw), fwdZ = -Math.cos(this.player.yaw);   // look direction (horizontal)
+    const toMx = npc.x - P.x, toMz = npc.z - P.z;
+    const maraDist = Math.hypot(toMx, toMz) || 1;
+    const mDx = toMx / maraDist, mDz = toMz / maraDist;
+    // signed angle from the look direction to Mara
+    const ang = Math.atan2(fwdX * mDz - fwdZ * mDx, Math.max(-1, Math.min(1, fwdX * mDx + fwdZ * mDz)));
+    const CONE = 0.42;                                  // ~24°, well inside the ~35° half-FOV
+    const inCone = Math.abs(ang) <= CONE + 1e-3;
+    const aClamped = Math.max(-CONE, Math.min(CONE, ang));   // aim toward Mara, but keep it on screen
+    const col = this.director.colliders;
+    const dry = (x, z) => this.world.groundHeight(x, z) > 0.2;
+    const clearBldg = (x, z) =>                          // never inside the glasshouse or the boathouse
+      Math.hypot(x - LAYOUT.green.x, z - LAYOUT.green.z) > LAYOUT.green.r * 0.6 &&
+      Math.hypot(x - LAYOUT.boathouse.x, z - LAYOUT.boathouse.z) > LAYOUT.boathouse.r * 0.6;
+    let bx = null, bz = null;
+    // try the Mara-ward edge of the cone first, then a few fallbacks; at each
+    // angle pull the distance in toward the player until the spot is valid + seen.
+    for (const a of [aClamped, aClamped * 0.5, 0, CONE, -CONE]) {
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const dx = fwdX * ca - fwdZ * sa, dz = fwdX * sa + fwdZ * ca;
+      // if Mara sits in the cone, aim just BEYOND her (looming at her, in view)
+      const d0 = inCone ? Math.min(15, Math.max(10, maraDist + 2.5)) : 10 + Math.random() * 3;
+      for (let d = d0; d >= 6; d -= 1.0) {
+        const x = P.x + dx * d;
+        const z = Math.min(P.z + dz * d, LAYOUT.shoreZ - 3);   // never out on the water
+        if (dry(x, z) && clearBldg(x, z) && col.losClear(P.x, P.z, x, z)) { bx = x; bz = z; break; }
+      }
+      if (bx !== null) break;
+    }
+    if (bx === null) { bx = P.x + fwdX * 9; bz = Math.min(P.z + fwdZ * 9, LAYOUT.shoreZ - 3); }  // last resort: dead ahead
+    const solved = col.resolve(bx, bz, 0.5);            // never embedded in a wall
+    esc.enemy = this.director.spawnAbductor('doble', solved.x, solved.z, npc);
     esc.timer = 0;
     this.audio.scream(0, 'doble');
     this.fx.glitch = Math.max(this.fx.glitch, 0.5);
