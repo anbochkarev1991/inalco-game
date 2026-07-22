@@ -610,6 +610,8 @@ export function buildBuildings(scene, colliders) {
   // eave. Height only — X centres are unchanged, so the see-through / photo /
   // window-gathering logic (all keyed to X) is untouched.
   const WINF = { sill: 0.95, head: 2.82 };
+  // second-storey windows — real cut openings (measured from the upper wall base, WALL_H)
+  const WINU = { sill: 0.95, head: 2.4 };
   const winFrontL = [-9, -4.5], winFrontR = [5, 9.5];   // centres along wall run axis (local)
   const winBackL = [-9.5, -4], winBackR = [4, 9.5];
   const winWest = [3.5], winEast = [-3.5, 3.5];   // NW opening dropped: the rear-west wing (below) covers that wall
@@ -620,28 +622,31 @@ export function buildBuildings(scene, colliders) {
   // one exterior wall segment with rectangular window openings cut out. Piers get
   // sight-blocking colliders; the opening column blocks walking but CLEARS sight
   // (losClear is 2D, so sill/header panels must not block sight — see colliders.js).
-  const exteriorWall = (cx, cz, w, d, us, sill = WIN.sill, head = WIN.head) => {
+  // Build one pierced exterior wall. baseY/wallH let it serve either storey; the
+  // second storey passes useCol=false (the ground perimeter colliders are already
+  // full-height) and its own geo bucket.
+  const exteriorWall = (cx, cz, w, d, us, sill = WIN.sill, head = WIN.head, baseY = 0, wallH = WALL_H, useCol = true, bucket = extGeos) => {
     const alongX = w >= d;
     const len = alongX ? w : d, thick = alongX ? d : w;
     const c0 = (alongX ? cx : cz) - len / 2, c1 = c0 + len;
     const addPier = (a, b) => {
       if (b - a < 1e-3) return;
       const pc = (a + b) / 2, pw = b - a;
-      if (alongX) { extGeos.push(boxGeo(pw, WALL_H, thick, pc, WALL_H / 2, cz)); cbox(pc, cz, pw, thick, true, Infinity); }
-      else        { extGeos.push(boxGeo(thick, WALL_H, pw, cx, WALL_H / 2, pc)); cbox(cx, pc, thick, pw, true, Infinity); }
+      if (alongX) { bucket.push(boxGeo(pw, wallH, thick, pc, baseY + wallH / 2, cz)); if (useCol) cbox(pc, cz, pw, thick, true, Infinity); }
+      else        { bucket.push(boxGeo(thick, wallH, pw, cx, baseY + wallH / 2, pc)); if (useCol) cbox(cx, pc, thick, pw, true, Infinity); }
     };
     let cursor = c0;
-    const overH = WALL_H - head;
+    const overH = wallH - head;
     for (const u of [...us].sort((a, b) => a - b)) {
       addPier(cursor, u - WIN.ow / 2);
       if (alongX) {
-        extGeos.push(boxGeo(WIN.ow, sill, thick, u, sill / 2, cz));                 // under-sill
-        if (overH > 0.01) extGeos.push(boxGeo(WIN.ow, overH, thick, u, head + overH / 2, cz)); // header
-        cbox(u, cz, WIN.ow, thick, false, Infinity);
+        bucket.push(boxGeo(WIN.ow, sill, thick, u, baseY + sill / 2, cz));                 // under-sill
+        if (overH > 0.01) bucket.push(boxGeo(WIN.ow, overH, thick, u, baseY + head + overH / 2, cz)); // header
+        if (useCol) cbox(u, cz, WIN.ow, thick, false, Infinity);
       } else {
-        extGeos.push(boxGeo(thick, sill, WIN.ow, cx, sill / 2, u));
-        if (overH > 0.01) extGeos.push(boxGeo(thick, overH, WIN.ow, cx, head + overH / 2, u));
-        cbox(cx, u, thick, WIN.ow, false, Infinity);
+        bucket.push(boxGeo(thick, sill, WIN.ow, cx, baseY + sill / 2, u));
+        if (overH > 0.01) bucket.push(boxGeo(thick, overH, WIN.ow, cx, baseY + head + overH / 2, u));
+        if (useCol) cbox(cx, u, thick, WIN.ow, false, Infinity);
       }
       cursor = u + WIN.ow / 2;
     }
@@ -699,6 +704,11 @@ export function buildBuildings(scene, colliders) {
   for (const u of [...winBackL, ...winBackR]) WINDOWS.push([u, -6.5, Math.PI]);
   for (const u of winWest) WINDOWS.push([-12, u, -Math.PI / 2]);
   for (const u of winEast) WINDOWS.push([12, u, Math.PI / 2]);
+  // second-storey window row (real openings, see-through into the walkable upstairs)
+  for (const u of [-9, -4.5, 5, 9.5]) WINDOWS.push([u, 6.5, 0, WINU.sill, WINU.head, WALL_H]);
+  for (const u of [-9.5, -4, 4, 9.5]) WINDOWS.push([u, -6.5, Math.PI, WINU.sill, WINU.head, WALL_H]);
+  WINDOWS.push([-12, 3.5, -Math.PI / 2, WINU.sill, WINU.head, WALL_H]);
+  for (const u of [-3.5, 3.5]) WINDOWS.push([12, u, Math.PI / 2, WINU.sill, WINU.head, WALL_H]);
 
   // floor
   const floorTex = canvasTexture((c, W, H) => {
@@ -749,23 +759,17 @@ export function buildBuildings(scene, colliders) {
   })();
   const EXT_H = 6.2;                          // exterior eave (two storeys); interior ceiling stays WALL_H
 
-  // upper-storey shell band (WALL_H..EXT_H): solid pale render, wrapping the ground
-  // shell built above so the block reads two storeys tall from the yard.
-  const uH = EXT_H - WALL_H, uY = WALL_H + uH / 2;
-  // segmented (~3 m bays) so the plank texture (0..1 UV per box) reads at a consistent board width, not stretched
-  for (let i = 0; i < 8; i++) { const x = -10.5 + i * 3; stuccoGeos.push(boxGeo(3, uH, 0.5, x, uY, -6.5)); }   // back upper band
-  // front upper band, carved for the central balcony doorway (aligned with the front-door opening)
-  { const dwL = 0.3, dwR = 1.7, dHead = STOREY_RISE + 2.0;
-    for (let i = 0; i < 8; i++) {
-      const x0 = -12 + i * 3, x1 = x0 + 3;
-      if (x1 <= dwL || x0 >= dwR) { stuccoGeos.push(boxGeo(3, uH, 0.5, (x0 + x1) / 2, uY, 6.5)); continue; }
-      if (x0 < dwL) stuccoGeos.push(boxGeo(dwL - x0, uH, 0.5, (x0 + dwL) / 2, uY, 6.5));
-      if (x1 > dwR) stuccoGeos.push(boxGeo(x1 - dwR, uH, 0.5, (dwR + x1) / 2, uY, 6.5));
-      const oL = Math.max(x0, dwL), oR = Math.min(x1, dwR);
-      stuccoGeos.push(boxGeo(oR - oL, EXT_H - dHead, 0.5, (oL + oR) / 2, (dHead + EXT_H) / 2, 6.5));   // lintel over the doorway
-    }
-  }
-  for (let i = 0; i < 5; i++) { const z = -5.4 + i * 2.7; stuccoGeos.push(boxGeo(0.5, uH, 2.7, -12, uY, z)); stuccoGeos.push(boxGeo(0.5, uH, 2.7, 12, uY, z)); }
+  // upper storey walls (WALL_H..EXT_H) with REAL window openings, matching the ground
+  // storey — so the second-floor windows are see-through from inside, not fake panels.
+  // No new colliders (the ground perimeter is already full-height); geometry → plank.
+  const uH = EXT_H - WALL_H;
+  exteriorWall(-5.8, 6.5, 12.4, 0.5, [-9, -4.5], WINU.sill, WINU.head, WALL_H, uH, false, stuccoGeos);   // front-left (balcony doorway gap 0.4..1.6)
+  exteriorWall(6.8, 6.5, 10.4, 0.5, [5, 9.5], WINU.sill, WINU.head, WALL_H, uH, false, stuccoGeos);      // front-right
+  exteriorWall(0, -6.5, 24, 0.5, [-9.5, -4, 4, 9.5], WINU.sill, WINU.head, WALL_H, uH, false, stuccoGeos); // back
+  exteriorWall(-12, 0, 0.5, 13.5, [3.5], WINU.sill, WINU.head, WALL_H, uH, false, stuccoGeos);           // west (wing covers the north bay)
+  exteriorWall(12, 0, 0.5, 13.5, [-3.5, 3.5], WINU.sill, WINU.head, WALL_H, uH, false, stuccoGeos);      // east
+  // lintel over the central balcony doorway (the gap 0.4..1.6 stays open onto the balcony)
+  { const dHead = STOREY_RISE + 2.0; stuccoGeos.push(boxGeo(1.2, EXT_H - dHead, 0.5, 1.0, (dHead + EXT_H) / 2, 6.5)); }
 
   // massive steep roof (~44°) springing from the TALL eave — it broods over the
   // whole house. halfD is the wall half-depth, so the eave sits on the wall top.
@@ -812,29 +816,8 @@ export function buildBuildings(scene, colliders) {
   addChimney(-9.6, 0, 1.05, 13.7);
   addChimney(10.4, -2.2, 0.85, 12.9);
 
-  // upper-storey window grid (a second row above the ground windows) + gabled
-  // dormers on the lake slope. These are the two features that most read as
-  // "Inalco". Upper windows are DARK (opaque) — the storey behind them is a sealed
-  // facade attic, so they look like unlit upstairs rooms. All merged per material.
-  const rotXZ = (ox, oz, ry) => [ox * Math.cos(ry) + oz * Math.sin(ry), -ox * Math.sin(ry) + oz * Math.cos(ry)];
-  const upWin = (wx, wz, ry, cy = 4.15) => {
-    const w2 = 1.0, h2 = 1.5;
-    const put = (bucket, w, h, d, ox, oy, oz) => { const [px, pz] = rotXZ(ox, oz, ry); bucket.push(boxGeo(w, h, d, wx + px, cy + oy, wz + pz, ry)); };
-    put(glassGeos, w2, h2, 0.05, 0, 0, 0);
-    put(rafterGeos, 0.09, h2 + 0.14, 0.1, -w2 / 2, 0, 0.05);
-    put(rafterGeos, 0.09, h2 + 0.14, 0.1, w2 / 2, 0, 0.05);
-    put(rafterGeos, w2 + 0.14, 0.09, 0.1, 0, h2 / 2, 0.05);
-    put(rafterGeos, w2 + 0.14, 0.09, 0.1, 0, -h2 / 2, 0.05);
-    put(whiteGeos, 0.05, h2, 0.04, 0, 0, 0.08);
-    put(whiteGeos, w2, 0.05, 0.04, 0, 0, 0.08);
-    put(whiteGeos, w2 + 0.3, 0.1, 0.2, 0, -h2 / 2 - 0.06, 0.06);                    // sill
-    put(shutterGeos, 0.42, h2, 0.06, -w2 / 2 - 0.24, 0, 0.06);
-    put(shutterGeos, 0.42, h2, 0.06, w2 / 2 + 0.24, 0, 0.06);
-  };
-  for (const wx of [-9, -4.5, 5, 9.5]) upWin(wx, 6.8, 0);         // front (lake) upper row — proud of the wall face
-  for (const wx of [-9.5, -4, 4, 9.5]) upWin(wx, -6.8, Math.PI);  // back upper row
-  for (const wz of [-3.5, 3.5]) upWin(12.3, wz, Math.PI / 2);     // east upper
-  upWin(-12.3, 3.5, -Math.PI / 2);                                // west upper (north bay hidden by the wing)
+  // (the upper-storey windows are now REAL cut openings built with exteriorWall above,
+  //  and their see-through joinery is added to the WINDOWS list — no fake panels.)
 
   const addDormer = (dx, s = 1) => {
     const dep = 1.5, faceZ = halfD + 0.28 * s, baseY = eave - 0.15, bodyH = 1.15 * s + 0.15, cz = faceZ - dep / 2;
@@ -855,9 +838,9 @@ export function buildBuildings(scene, colliders) {
   // glazing, muntins, sill, header, shutters, and a warm glow plane lit only when
   // powered (dim enough to still see out/in).
   const railT = 0.1, fw = WIN.ow + 0.12, ft = 0.16;
-  for (const [wx, wz, ry, wSill = WIN.sill, wHead = WIN.head] of WINDOWS) {
+  for (const [wx, wz, ry, wSill = WIN.sill, wHead = WIN.head, wBase = 0] of WINDOWS) {
     const g = new THREE.Group();
-    const fh = wHead - wSill + 0.05, yc = (wSill + wHead) / 2;   // per-window (front gallery is taller)
+    const fh = wHead - wSill + 0.05, yc = wBase + (wSill + wHead) / 2;   // per-window; wBase lifts the upper row
     g.position.set(wx, yc, wz); g.rotation.y = ry;
     const gh = wHead - wSill;                              // glazed height
     const frameTop = box(fw, railT, ft, mat.woodDark, 0, fh / 2 - railT / 2, 0);
@@ -1115,14 +1098,15 @@ export function buildBuildings(scene, colliders) {
   const coatCloth = box(0.42, 0.9, 0.2, new THREE.MeshLambertMaterial({ color: 0x2e3236 }), 0.12, 1.05, 0.06);
   coatCloth.rotation.z = 0.06; coat.add(coatCloth);
   coat.position.set(-1.5, 0, 5.4); house.add(coat);
-  // console table with a framed portrait + candlestick, against W2
-  house.add(box(1.3, 0.06, 0.42, mat.wood, 1.5, 0.82, 5.2));
-  for (const dx of [-0.55, 0.55]) house.add(box(0.06, 0.8, 0.06, mat.woodDark, 1.5 + dx, 0.4, 5.2));
+  // console table — moved to the foyer's WEST side so it no longer sits in front of
+  // the staircase (it used to partially block the way up).
+  house.add(box(1.3, 0.06, 0.42, mat.wood, -1.3, 0.82, 5.0));
+  for (const dx of [-0.55, 0.55]) house.add(box(0.06, 0.8, 0.06, mat.woodDark, -1.3 + dx, 0.4, 5.0));
   // b3: kept as a reference — the revisit system knocks it crooked on a later
   // return, once the house has had a chance to shift behind your back.
   const corridorPainting = painting(1.7, 1.7, 5.2, -Math.PI / 2, 57, 0.7);
   house.add(corridorPainting);
-  cbox(1.6, 5.2, 1.3, 0.5, false);
+  cbox(-1.3, 5.0, 1.3, 0.5, false);   // console collider (moved off the stair approach)
   // a long runner down the hall
   const runner = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 10), new THREE.MeshLambertMaterial({ color: 0x3c2b30 }));
   runner.rotation.x = -Math.PI / 2; runner.position.set(0, 0.03, -0.5); runner.receiveShadow = true;
@@ -1133,7 +1117,7 @@ export function buildBuildings(scene, colliders) {
   clock.add(box(0.36, 0.36, 0.05, new THREE.MeshLambertMaterial({ color: 0xd9d0b4 }), 0, 1.72, 0.18));
   clock.position.set(-1.72, 0, -3.6); house.add(clock);
   cbox(-1.72, -3.6, 0.5, 0.4, false);
-  anchors.corridorNote = { x: HX + 1.5, z: HZ + 5.2, y: FY + 0.86 };      // on the console
+  anchors.corridorNote = { x: HX - 1.3, z: HZ + 5.0, y: FY + 0.86 };      // on the console (foyer, west side)
   anchors.scareSpawn = { x: HX + 0.6, z: HZ - 5.6 };
   anchors.foyer = { x: HX + 0.6, z: HZ + 3.2 };
 
@@ -1394,9 +1378,13 @@ export function buildBuildings(scene, colliders) {
     deckBox(STAIR.x1, IX1, STAIR.zTop, STAIR.zBot);     // east of the well
     mergeInto(house, upFloorGeos, mat.wood);
 
-    // upstairs partitions mirror the ground plan (same doorways) + upper colliders
+    // upstairs partitions mirror the ground plan (same doorways) + upper colliders.
+    // BUT the corridor's east doors to the study (z 3.2..4.6) and pantry (z -0.7..0.7)
+    // open right onto the stairwell — you can't reach them past the well/rails. Seal
+    // them here; both rooms are still reachable via the kitchen door + interconnects.
     const upWH = UP_CEIL - deckY;
-    for (const [cx, cz, w, d] of partitions) {
+    const upperPartitions = [...partitions, [2, 3.9, 0.28, 1.4], [2, 0, 0.28, 1.4]];   // + the two sealing infills
+    for (const [cx, cz, w, d] of upperPartitions) {
       upWallGeos.push(boxGeo(w, upWH, d, cx, deckY + upWH / 2, cz));
       ucbox(cx, cz, w, d);
     }
@@ -1431,7 +1419,7 @@ export function buildBuildings(scene, colliders) {
     mergeInto(house, upTrimGeos, mat.greenWood);
 
     // powered ceiling lamps upstairs (light with the generator, via the lamps array)
-    for (const [lx, lz] of [[-7, 3.5], [-7, -3.5], [5, 3.5], [9.8, -3]]) {   // 4 lamps (kept lean for weak hardware)
+    for (const [lx, lz] of [[-7, 3.5], [-7, -3.5], [9.8, -3]]) {   // 3 lamps (kept lean for weak hardware)
       const lg = new THREE.Group(); lg.position.set(lx, UP_CEIL - 0.02, lz);
       lg.add(cyl(0.015, 0.015, 0.42, mat.metal, 0, -0.21, 0, 4));
       const shade = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.24, 8, 1, true), new THREE.MeshLambertMaterial({ color: 0x3a4238, side: THREE.DoubleSide })); shade.position.y = -0.5;
@@ -1470,7 +1458,7 @@ export function buildBuildings(scene, colliders) {
     // first-person camera never renders it, but the mirror's own camera does, so you
     // see yourself in the glass. The reflector only renders when you're near (perf). ---
     const mmX = -11.66, mmY = deckY + 1.15, mmZ = 1.0, gw = 0.86, gh = 1.7, frameM = mat.woodDark;
-    const mirror = new Reflector(new THREE.PlaneGeometry(gw, gh), { color: 0x5a5f63, textureWidth: 512, textureHeight: 512 });
+    const mirror = new Reflector(new THREE.PlaneGeometry(gw, gh), { color: 0x5a5f63, textureWidth: 256, textureHeight: 256 });   // low-res render target — cheap
     mirror.position.set(mmX, mmY, mmZ); mirror.rotation.y = Math.PI / 2;   // glass faces +x, into the room
     mirror.camera.layers.enable(2);          // the reflection ALSO renders the Anna proxy (layer 2)
     mirror.visible = false;                  // gated on by proximity — no render cost otherwise
@@ -1488,11 +1476,16 @@ export function buildBuildings(scene, colliders) {
     anna.visible = false;
     scene.add(anna);
     const mmWX = HX + mmX, mmWZ = HZ + mmZ;
-    let litForMirror = false;
+    let litForMirror = false, mirrorOn = false;
     updateMirror = (px, pz, py, pyaw) => {
-      const on = py > 4 && Math.hypot(px - mmWX, pz - mmWZ) < 7.5;   // upstairs + within ~7.5 m
-      mirror.visible = on; anna.visible = on;
-      if (on) {
+      // only render the reflection when upstairs AND near AND roughly facing the mirror
+      // (its normal is -x, toward the room). Hysteresis stops it flickering at the edge.
+      const d = Math.hypot(px - mmWX, pz - mmWZ), upstairs = py > 4;
+      const facing = Math.sin(pyaw) > 0.25;   // player's view turned toward -x (the glass on the west wall)
+      if (!mirrorOn && upstairs && d < 5.5 && facing) mirrorOn = true;
+      else if (mirrorOn && (!upstairs || d > 8 || !facing)) mirrorOn = false;
+      mirror.visible = mirrorOn; anna.visible = mirrorOn;
+      if (mirrorOn) {
         anna.position.set(px, py, pz); anna.rotation.y = pyaw + Math.PI;   // stand where you stand, face your facing
         if (!litForMirror) { litForMirror = true; scene.traverse((o) => { if (o.isLight) o.layers.enable(2); }); }  // let the lights reach her (layer 2), once
       }
