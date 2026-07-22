@@ -662,8 +662,11 @@ export function buildBuildings(scene, colliders) {
   const partitions = [
     // W1 — west partition (spine | Sitting/Dining), doors z 3.2..4.6 & -2.8..-1.4
     [-2, 5.55, 0.28, 1.9], [-2, 0.9, 0.28, 4.6], [-2, -4.65, 0.28, 3.7],
-    // W2 — east partition (spine | Study/Pantry/Kitchen), doors z 3.2..4.6, -0.7..0.7, -4.6..-3.2
-    [2, 5.55, 0.28, 1.9], [2, 1.95, 0.28, 2.5], [2, -1.95, 0.28, 2.5], [2, -5.55, 0.28, 1.9],
+    // W2 — east partition (spine | Study/Pantry/Kitchen). The staircase runs up this
+    // side of the corridor on BOTH floors, so its rail would block the study (z 3.2..4.6)
+    // and pantry (z -0.7..0.7) corridor doors — sealed here; only the KITCHEN door
+    // (z -3.2..-4.6) opens to the corridor. Study & pantry are reached via kitchen + bedroom.
+    [2, 1.65, 0.28, 9.7], [2, -5.55, 0.28, 1.9],
     // west cross-wall (Sitting | Dining), door x -7..-5.6
     [-9.5, 0.5, 5, 0.28], [-3.8, 0.5, 3.6, 0.28],
     // east cross-walls: Study|Pantry (solid) and Pantry|Kitchen (door x 4.3..5.5)
@@ -1378,12 +1381,9 @@ export function buildBuildings(scene, colliders) {
     deckBox(STAIR.x1, IX1, STAIR.zTop, STAIR.zBot);     // east of the well
     mergeInto(house, upFloorGeos, mat.wood);
 
-    // upstairs partitions mirror the ground plan (same doorways) + upper colliders.
-    // BUT the corridor's east doors to the study (z 3.2..4.6) and pantry (z -0.7..0.7)
-    // open right onto the stairwell — you can't reach them past the well/rails. Seal
-    // them here; both rooms are still reachable via the kitchen door + interconnects.
+    // upstairs partitions mirror the (already stair-sealed) ground plan + upper colliders
     const upWH = UP_CEIL - deckY;
-    const upperPartitions = [...partitions, [2, 3.9, 0.28, 1.4], [2, 0, 0.28, 1.4]];   // + the two sealing infills
+    const upperPartitions = partitions;   // same sealed layout as the ground floor (study/pantry corridor doors closed)
     for (const [cx, cz, w, d] of upperPartitions) {
       upWallGeos.push(boxGeo(w, upWH, d, cx, deckY + upWH / 2, cz));
       ucbox(cx, cz, w, d);
