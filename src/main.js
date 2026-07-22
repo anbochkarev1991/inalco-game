@@ -74,7 +74,7 @@ const world = buildWorld(scene, colliders);
 const buildings = buildBuildings(scene, colliders);
 const npcs = buildNPCs(scene, colliders);
 const player = new Player(camera, scene, colliders, world.groundHeight, audio);
-player.floorOverride = buildings.cellar.floorAt;   // lets the under-house cellar sit below the main floor
+player.floorOverride = buildings.floorAt;   // multi-level: under-house cellar + the walkable second floor
 const dialog = new Dialog(audio);
 const fxpipe = createPostFX(renderer, scene, camera);
 const fx = fxpipe.fx;
@@ -119,6 +119,7 @@ const CREDITS_HTML = `
 // (never inside the house) and reads as a dark shape against the warm glow.
 const WINDOW_POST_Z = LAYOUT.house.z + 7.7;   // front wall face ≈ z −7.25; posts ≈ 0.95 m in front
 const windowPosts = [-8.5, -4.5, 5.5, 10].map((wx) => ({ x: LAYOUT.house.x + wx, z: WINDOW_POST_Z }));
+let _massSeen = 0;   // staged one-time reactions to the breathing thing upstairs
 
 const director = new Director(scene, colliders, world.groundHeight, audio, {
   getPlayer: () => ({ pos: player.pos, dir: player.camDir(), flashOn: player.flashOn }),
@@ -692,6 +693,30 @@ function frame() {
     const fireD = Math.hypot(player.pos.x - npcs.campfire.x, player.pos.z - npcs.campfire.z);
     if (fireD < 4.5 && !player.dead) {
       player.composure = Math.min(100 + player.maxBonus, player.composure + 10 * dt);
+    }
+
+    // the thing that breathes upstairs — Ana reacts, terrified (each line fires once)
+    const mb = buildings.anchors.breather;
+    if (mb && player.pos.y > 4 && !player.dead) {
+      const md = Math.hypot(player.pos.x - mb.x, player.pos.z - mb.z);
+      if (_massSeen < 1 && md < 5.5) {
+        _massSeen = 1;
+        ui.say('ANA', 'Something in here is breathing. Slow. Wet. That is not — that is not furniture.', 4.4);
+        fx.glitch = Math.max(fx.glitch, 0.5);
+      } else if (_massSeen < 2 && md < 2.9) {
+        _massSeen = 2;
+        ui.say('ANA', 'It has a face. It turned it toward me. It isn’t anything — there’s no word for it — I have to get out, I have to get out—', 5.2);
+        fx.glitch = Math.max(fx.glitch, 0.9);
+      }
+      // it feeds: standing close to it drains life, very slowly (≈6%/10s at the edge,
+      // more the closer you are), with a creeping red pulse so you SEE it happening.
+      if (md < 1.9) {
+        const near = 1 - md / 1.9;                        // 0 at the edge → 1 at its centre
+        player.fearDrain(dt, 0.4 + 0.6 * near);           // ~0.4..1.0 composure/sec (regen also pauses)
+        const pulse = 0.5 + 0.5 * Math.sin(time * 1.05);  // breath-synced
+        fx.damage = Math.max(fx.damage, 0.14 + (0.12 + 0.14 * near) * pulse);
+        if (md < 1.2) fx.glitch = Math.max(fx.glitch, 0.12 * near);
+      }
     }
 
     // decay story static spike

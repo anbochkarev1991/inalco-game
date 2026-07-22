@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PAL, LAYOUT, TUNE } from './config.js';
 import { canvasTexture, makeSign, plasterTex, planksTex, shinglesTex, stoneTex, shutterTex, CELLAR } from './world.js';
 import { spawn } from './assets.js';
@@ -456,10 +456,58 @@ function buildPiano() {
   };
 }
 
+// A breathing, faced thing that is not an anything — ONE continuous, slumped, wet
+// organic mesh. Its face (two mismatched eye sockets + a lipless mouth gash) is
+// CARVED into the surface, not built from stuck-on primitives; only two sunken
+// pupils are separate. It swells and settles like slow lungs. Returns { group, update(t) }.
+function buildBreathingMass() {
+  const g = new THREE.Group();
+  const skin = new THREE.MeshStandardMaterial({ color: 0x2b191b, roughness: 0.5, metalness: 0, emissive: 0x1a0507, emissiveIntensity: 0.16 });
+  let geo = new THREE.IcosahedronGeometry(1.0, 4);
+  geo = mergeVertices(geo);                             // weld the primitive's split verts so normals can be SMOOTH (not faceted)
+  const pos = geo.attributes.position, v = new THREE.Vector3();
+  let seed = 92821; const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  // face on the +z side; carve sockets/mouth INWARD so they are part of the one mesh
+  const eyeA = new THREE.Vector3(-0.30, 0.30, 0.9).normalize();
+  const eyeB = new THREE.Vector3(0.34, 0.02, 0.94).normalize();
+  const mDir = new THREE.Vector3(0.05, -0.34, 0.94).normalize();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i); const n = v.clone().normalize();
+    let r = 1.0
+      + 0.32 * Math.sin(n.x * 2.0 + 1) * Math.cos(n.y * 1.6)     // big rounded lobes
+      + 0.24 * Math.sin(n.z * 2.3 + n.x * 1.2)
+      + 0.12 * Math.sin(n.y * 3.1 + n.z * 2.5)
+      + 0.03 * (rnd() - 0.5);
+    r -= 0.46 * Math.pow(Math.max(0, n.dot(eyeA)), 24);          // eye socket A (deep, carved in)
+    r -= 0.40 * Math.pow(Math.max(0, n.dot(eyeB)), 30);          // eye socket B (smaller, higher)
+    const md = Math.max(0, n.dot(mDir));
+    r -= 0.5 * Math.pow(md, 8) * Math.exp(-Math.pow(n.y - mDir.y, 2) * 55);   // horizontal mouth gash
+    v.copy(n).multiplyScalar(r);
+    v.y *= 0.72;                                                 // flattened / slumped — a mass pooled on the floor
+    if (v.y < 0) v.y *= 1.22;
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  geo.computeVertexNormals();
+  const body = new THREE.Mesh(geo, skin); body.castShadow = true; body.receiveShadow = true; g.add(body);
+  // wet pupils sunk deep in the sockets — the only bits that aren't the body itself
+  const pm = new THREE.MeshStandardMaterial({ color: 0x120607, roughness: 0.15, metalness: 0.4, emissive: 0x300608, emissiveIntensity: 0.5 });
+  const pupil = (dir, s) => { const m = new THREE.Mesh(new THREE.SphereGeometry(s, 8, 6), pm); m.position.copy(dir).multiplyScalar(0.6); m.position.y *= 0.72; g.add(m); };
+  pupil(eyeA, 0.08); pupil(eyeB, 0.055);
+  return {
+    group: g, skin,
+    update(t) {
+      const breath = 0.5 + 0.5 * Math.sin(t * 1.05 + Math.sin(t * 0.37) * 1.5);
+      body.scale.set(1 + 0.05 * breath, 1 + 0.11 * breath, 1 + 0.05 * breath);   // slow lungs
+      skin.emissiveIntensity = 0.12 + 0.16 * breath;
+    },
+  };
+}
+
 export function buildBuildings(scene, colliders) {
   const doors = {};
   const anchors = {};
   const lamps = [];        // {light, bulbMat, base}
+  const breathers = [];    // { update(t) } — the upstairs thing that breathes
   const glowPlanes = [];   // glow materials (opacity flicker)
   const glowMeshes = [];   // the glow meshes themselves (visibility toggled with power)
   let power = false;
@@ -469,8 +517,21 @@ export function buildBuildings(scene, colliders) {
   // That lets a player down in the cellar walk beneath them; anyone at house
   // level (head well above the floor) is still blocked exactly as before.
   const HOUSE_COLLIDER_FLOOR = FY + 0.2;
-  const cbox = (lx, lz, w, d, sight = true) =>
-    colliders.addBox(HX + lx, HZ + lz, w, d, { blocksSight: sight, yBottom: HOUSE_COLLIDER_FLOOR });
+  // Two walkable storeys now. Interior colliders (partitions + furniture) are capped
+  // at the ground ceiling so they don't also block the upstairs; EXTERIOR walls pass
+  // yTop:Infinity so they block both floors. The upstairs deck sits at UPPER_FLOOR_Y.
+  const STOREY_RISE = 3.25;                       // local height climbed from ground to upstairs
+  const UPPER_FLOOR_Y = FY + STOREY_RISE;         // world Y of the upstairs walking surface
+  const GROUND_CEIL_Y = FY + 3.1;                 // interior colliders stop just under the upstairs deck
+  const UP_CEIL = 5.95;                           // local upstairs ceiling height
+  // stairwell footprint (LOCAL x,z) — shared by the ground-ceiling hole, the upstairs
+  // deck hole, the staircase, and the floor override so they all line up exactly.
+  const STAIR = { x0: 0.3, x1: 1.9, zBot: 4.6, zTop: -1.0 };
+  const cbox = (lx, lz, w, d, sight = true, yTop = GROUND_CEIL_Y) =>
+    colliders.addBox(HX + lx, HZ + lz, w, d, { blocksSight: sight, yBottom: HOUSE_COLLIDER_FLOOR, yTop });
+  // an upstairs collider: occupies the band from the upper deck up
+  const ucbox = (lx, lz, w, d, sight = true) =>
+    colliders.addBox(HX + lx, HZ + lz, w, d, { blocksSight: sight, yBottom: UPPER_FLOOR_Y - 0.1 });
 
   const house = new THREE.Group();
   house.position.set(HX, FY, HZ);
@@ -510,8 +571,8 @@ export function buildBuildings(scene, colliders) {
     const addPier = (a, b) => {
       if (b - a < 1e-3) return;
       const pc = (a + b) / 2, pw = b - a;
-      if (alongX) { extGeos.push(boxGeo(pw, WALL_H, thick, pc, WALL_H / 2, cz)); cbox(pc, cz, pw, thick); }
-      else        { extGeos.push(boxGeo(thick, WALL_H, pw, cx, WALL_H / 2, pc)); cbox(cx, pc, thick, pw); }
+      if (alongX) { extGeos.push(boxGeo(pw, WALL_H, thick, pc, WALL_H / 2, cz)); cbox(pc, cz, pw, thick, true, Infinity); }
+      else        { extGeos.push(boxGeo(thick, WALL_H, pw, cx, WALL_H / 2, pc)); cbox(cx, pc, thick, pw, true, Infinity); }
     };
     let cursor = c0;
     const overH = WALL_H - head;
@@ -520,11 +581,11 @@ export function buildBuildings(scene, colliders) {
       if (alongX) {
         extGeos.push(boxGeo(WIN.ow, sill, thick, u, sill / 2, cz));                 // under-sill
         if (overH > 0.01) extGeos.push(boxGeo(WIN.ow, overH, thick, u, head + overH / 2, cz)); // header
-        cbox(u, cz, WIN.ow, thick, false);
+        cbox(u, cz, WIN.ow, thick, false, Infinity);
       } else {
         extGeos.push(boxGeo(thick, sill, WIN.ow, cx, sill / 2, u));
         if (overH > 0.01) extGeos.push(boxGeo(thick, overH, WIN.ow, cx, head + overH / 2, u));
-        cbox(cx, u, thick, WIN.ow, false);
+        cbox(cx, u, thick, WIN.ow, false, Infinity);
       }
       cursor = u + WIN.ow / 2;
     }
@@ -603,10 +664,18 @@ export function buildBuildings(scene, colliders) {
   floor.rotation.x = -Math.PI / 2; floor.position.y = 0.02;
   floor.receiveShadow = true;
   house.add(floor);
-  // ceiling + exposed beams in the great hall
-  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(24, 13), new THREE.MeshLambertMaterial({ color: 0x8f948a, side: THREE.DoubleSide }));
-  ceil.rotation.x = Math.PI / 2; ceil.position.y = WALL_H;
-  house.add(ceil);
+  // ground ceiling — built in four panels around a stairwell hole so the staircase
+  // can rise through it to the second floor (the hole matches STAIR exactly).
+  const ceilMat = new THREE.MeshLambertMaterial({ color: 0x8f948a, side: THREE.DoubleSide });
+  const ceilPanel = (x0, x1, z0, z1) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), ceilMat);
+    m.rotation.x = Math.PI / 2; m.position.set((x0 + x1) / 2, WALL_H, (z0 + z1) / 2);
+    house.add(m);
+  };
+  ceilPanel(-12, 12, STAIR.zBot, 6.5);
+  ceilPanel(-12, 12, -6.5, STAIR.zTop);
+  ceilPanel(-12, STAIR.x0, STAIR.zTop, STAIR.zBot);
+  ceilPanel(STAIR.x1, 12, STAIR.zTop, STAIR.zBot);
   for (const bx of [-9.5, -6.5, -3.5]) house.add(box(0.16, 0.22, 12.6, mat.woodDark, bx, WALL_H - 0.11, 0));
 
   // ------------------------------------------------------------- Inalco shell
@@ -628,7 +697,18 @@ export function buildBuildings(scene, colliders) {
   // shell built above so the block reads two storeys tall from the yard.
   const uH = EXT_H - WALL_H, uY = WALL_H + uH / 2;
   // segmented (~3 m bays) so the plank texture (0..1 UV per box) reads at a consistent board width, not stretched
-  for (let i = 0; i < 8; i++) { const x = -10.5 + i * 3; stuccoGeos.push(boxGeo(3, uH, 0.5, x, uY, 6.5)); stuccoGeos.push(boxGeo(3, uH, 0.5, x, uY, -6.5)); }
+  for (let i = 0; i < 8; i++) { const x = -10.5 + i * 3; stuccoGeos.push(boxGeo(3, uH, 0.5, x, uY, -6.5)); }   // back upper band
+  // front upper band, carved for the central balcony doorway (aligned with the front-door opening)
+  { const dwL = 0.3, dwR = 1.7, dHead = STOREY_RISE + 2.0;
+    for (let i = 0; i < 8; i++) {
+      const x0 = -12 + i * 3, x1 = x0 + 3;
+      if (x1 <= dwL || x0 >= dwR) { stuccoGeos.push(boxGeo(3, uH, 0.5, (x0 + x1) / 2, uY, 6.5)); continue; }
+      if (x0 < dwL) stuccoGeos.push(boxGeo(dwL - x0, uH, 0.5, (x0 + dwL) / 2, uY, 6.5));
+      if (x1 > dwR) stuccoGeos.push(boxGeo(x1 - dwR, uH, 0.5, (dwR + x1) / 2, uY, 6.5));
+      const oL = Math.max(x0, dwL), oR = Math.min(x1, dwR);
+      stuccoGeos.push(boxGeo(oR - oL, EXT_H - dHead, 0.5, (oL + oR) / 2, (dHead + EXT_H) / 2, 6.5));   // lintel over the doorway
+    }
+  }
   for (let i = 0; i < 5; i++) { const z = -5.4 + i * 2.7; stuccoGeos.push(boxGeo(0.5, uH, 2.7, -12, uY, z)); stuccoGeos.push(boxGeo(0.5, uH, 2.7, 12, uY, z)); }
 
   // massive steep roof (~44°) springing from the TALL eave — it broods over the
@@ -762,7 +842,7 @@ export function buildBuildings(scene, colliders) {
   cbox((txMin + gapL) / 2, tzOut, gapL - txMin, 0.34, false);
   cbox((gapR + txMax) / 2, tzOut, txMax - gapR, 0.34, false);
   // square green timber posts + a beam ring
-  const postH = 2.7;
+  const postH = STOREY_RISE - 0.05;   // posts rise to carry the balcony at the upstairs floor level
   for (const [px, pz] of [[txMin + 0.28, tzIn + 0.35], [txMax - 0.28, tzIn + 0.35], [txMin + 0.28, tzOut - 0.35], [txMax - 0.28, tzOut - 0.35]]) {
     greenGeos.push(boxGeo(0.18, postH, 0.18, px, postH / 2, pz));
     cbox(px, pz, 0.26, 0.26, false);
@@ -774,8 +854,8 @@ export function buildBuildings(scene, colliders) {
   // the entrance canopy doubles as the first-floor lake BALCONY (the real Inalco
   // has a bedroom balcony over the water). Flat deck on the porch posts + green rail
   // + a central upper French door onto it.
-  const balY = postH + 0.16;
-  shingleGeos.push(boxGeo(tW + 0.5, 0.16, tD + 0.4, tCx, balY, tCz + 0.1));         // deck / entrance canopy
+  const balY = STOREY_RISE;                                                         // balcony deck flush with the upstairs floor
+  shingleGeos.push(boxGeo(tW + 0.5, 0.16, tD + 0.4, tCx, balY - 0.08, tCz + 0.1));  // deck / entrance canopy (top at the upstairs level)
   greenGeos.push(boxGeo(tW + 0.5, 0.1, 0.14, tCx, balY + 0.08, tzOut + 0.2));       // deck fascia
   const rTop = balY + 0.98;
   for (const [mx, mz, lx, lz] of [
@@ -786,10 +866,11 @@ export function buildBuildings(scene, colliders) {
   }
   for (let bx = txMin + 0.2; bx <= txMax - 0.2; bx += 0.42) greenGeos.push(boxGeo(0.05, 0.95, 0.05, bx, balY + 0.5, tzOut));
   for (const px of [txMin, txMax]) greenGeos.push(boxGeo(0.1, 0.98, 0.1, px, balY + 0.5, tzOut));
-  glassGeos.push(boxGeo(1.2, 1.95, 0.05, tCx, balY + 1.15, 6.82));                  // central French door onto the balcony
-  rafterGeos.push(boxGeo(0.1, 2.05, 0.1, tCx - 0.62, balY + 1.15, 6.84));
-  rafterGeos.push(boxGeo(0.1, 2.05, 0.1, tCx + 0.62, balY + 1.15, 6.84));
-  rafterGeos.push(boxGeo(1.34, 0.1, 0.1, tCx, balY + 2.12, 6.84));
+  // the central French doorway onto the balcony is now a real opening (carved in the
+  // upper band, below) — leave just the timber jambs + head as its frame, no glass.
+  rafterGeos.push(boxGeo(0.1, 2.05, 0.1, tCx - 0.62, balY + 1.05, 6.84));
+  rafterGeos.push(boxGeo(0.1, 2.05, 0.1, tCx + 0.62, balY + 1.05, 6.84));
+  rafterGeos.push(boxGeo(1.34, 0.1, 0.1, tCx, balY + 2.05, 6.84));
 
   // porch light — a lantern hung from the porch ceiling, on a visible rod.
   // (previously a bare low-poly sphere floated unsupported above the door: it
@@ -819,6 +900,7 @@ export function buildBuildings(scene, colliders) {
   house.add(box(1.56, 0.16, 0.62, doorFrameM, 1.0, 2.28, 6.5));            // head casing
   house.add(box(1.5, 0.07, 0.44, mat.stone, 1.0, 0.035, 6.52));           // stone threshold
   doors.front = makeDoor(scene, colliders, { x: HX + 1, z: HZ + 6.5, y: FY, axis: 'x', swing: -1, locked: true, name: 'front' });
+  doors.front.collider.yTop = GROUND_CEIL_Y;   // ground-only, so it never blocks the upstairs balcony doorway above it
 
   // back door — opens to the rear yard and the cellar stair
   house.add(box(0.13, 2.36, 0.6, doorFrameM, -0.75, 1.18, -6.5));
@@ -1239,6 +1321,138 @@ export function buildBuildings(scene, colliders) {
   const insideHouse = (x, z) => Math.abs(x - HX) < 12.2 && Math.abs(z - HZ) < 6.7;
   const insideHouseM = (x, z, m = 0) => Math.abs(x - HX) < 12.2 + m && Math.abs(z - HZ) < 6.7 + m;
 
+  // ============================ SECOND FLOOR ============================
+  // The exterior grew a storey, so make it walkable. A staircase climbs from the
+  // front hall to an upper floor that mirrors the ground plan (bare bedrooms) and
+  // opens onto the lake balcony; one room holds the thing that breathes. Physics
+  // rides the same floor-override the cellar uses.
+  {
+    const deckY = STOREY_RISE;                          // local top of the upstairs floor
+    const upFloorGeos = [], upWallGeos = [], upStepGeos = [], upTrimGeos = [];
+    // upstairs deck = interior footprint minus the stairwell hole (4 strips)
+    const IX0 = -11.9, IX1 = 11.9, IZ0 = -6.4, IZ1 = 6.4, dT = 0.18;
+    const deckBox = (x0, x1, z0, z1) => { if (x1 - x0 < 0.05 || z1 - z0 < 0.05) return; upFloorGeos.push(boxGeo(x1 - x0, dT, z1 - z0, (x0 + x1) / 2, deckY - dT / 2, (z0 + z1) / 2)); };
+    deckBox(IX0, IX1, STAIR.zBot, IZ1);                 // front strip (lake side)
+    deckBox(IX0, IX1, IZ0, STAIR.zTop);                 // back strip
+    deckBox(IX0, STAIR.x0, STAIR.zTop, STAIR.zBot);     // west of the well
+    deckBox(STAIR.x1, IX1, STAIR.zTop, STAIR.zBot);     // east of the well
+    mergeInto(house, upFloorGeos, mat.wood);
+
+    // upstairs partitions mirror the ground plan (same doorways) + upper colliders
+    const upWH = UP_CEIL - deckY;
+    for (const [cx, cz, w, d] of partitions) {
+      upWallGeos.push(boxGeo(w, upWH, d, cx, deckY + upWH / 2, cz));
+      ucbox(cx, cz, w, d);
+    }
+    mergeInto(house, upWallGeos, mat.plasterIn);
+
+    // upstairs ceiling
+    const upC = new THREE.Mesh(new THREE.PlaneGeometry(24, 13), ceilMat);
+    upC.rotation.x = Math.PI / 2; upC.position.y = UP_CEIL; house.add(upC);
+
+    // the staircase (corridor, against W2): bottom z=zBot at ground → top z=zTop upstairs
+    const sx0 = STAIR.x0 + 0.12, sx1 = STAIR.x1 - 0.12, steps = 14;
+    const run = STAIR.zBot - STAIR.zTop;
+    for (let i = 0; i < steps; i++) {
+      const zc = STAIR.zBot - run * (i + 0.5) / steps, topY = deckY * (i + 1) / steps;
+      upStepGeos.push(boxGeo(sx1 - sx0, topY, run / steps + 0.02, (sx0 + sx1) / 2, topY / 2, zc));
+    }
+    mergeInto(house, upStepGeos, mat.plankDark);
+
+    // rail colliders: full-height sides so you can't step off the stair; an upstairs
+    // rail across the well's south edge (you arrive at the north/top edge).
+    const midZ = (STAIR.zTop + STAIR.zBot) / 2;
+    colliders.addBox(HX + STAIR.x0, HZ + midZ, 0.12, run + 0.1, { yBottom: HOUSE_COLLIDER_FLOOR, yTop: Infinity });
+    colliders.addBox(HX + STAIR.x1, HZ + midZ, 0.12, run + 0.1, { yBottom: HOUSE_COLLIDER_FLOOR, yTop: Infinity });
+    ucbox((STAIR.x0 + STAIR.x1) / 2, STAIR.zBot, STAIR.x1 - STAIR.x0, 0.12, false);
+    // green rails: sloped along the stair + horizontal around the well
+    const railLen = Math.hypot(run, deckY), railAng = Math.atan2(deckY, run);
+    upTrimGeos.push(boxGeo(0.08, 0.85, railLen + 0.2, STAIR.x0 + 0.04, deckY / 2 + 0.82, midZ, 0, railAng, 0));
+    upTrimGeos.push(boxGeo(0.08, 0.85, railLen + 0.2, STAIR.x1 - 0.04, deckY / 2 + 0.82, midZ, 0, railAng, 0));
+    upTrimGeos.push(boxGeo(STAIR.x1 - STAIR.x0 + 0.1, 0.08, 0.08, (STAIR.x0 + STAIR.x1) / 2, deckY + 0.88, STAIR.zBot));
+    upTrimGeos.push(boxGeo(0.08, 0.08, run, STAIR.x0, deckY + 0.88, midZ));
+    upTrimGeos.push(boxGeo(0.08, 0.08, run, STAIR.x1, deckY + 0.88, midZ));
+    mergeInto(house, upTrimGeos, mat.greenWood);
+
+    // powered ceiling lamps upstairs (light with the generator, via the lamps array)
+    for (const [lx, lz] of [[-7, 3.5], [-7, -3.5], [5, 3.5], [9.8, -3]]) {   // 4 lamps (kept lean for weak hardware)
+      const lg = new THREE.Group(); lg.position.set(lx, UP_CEIL - 0.02, lz);
+      lg.add(cyl(0.015, 0.015, 0.42, mat.metal, 0, -0.21, 0, 4));
+      const shade = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.24, 8, 1, true), new THREE.MeshLambertMaterial({ color: 0x3a4238, side: THREE.DoubleSide })); shade.position.y = -0.5;
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshBasicMaterial({ color: 0x201a12 })); bulb.position.y = -0.58;
+      lg.add(shade, bulb); house.add(lg);
+      const light = new THREE.PointLight(PAL.warm, 0, 9, 1.9); light.position.set(lx, UP_CEIL - 0.55, lz); house.add(light);
+      lamps.push({ light, bulbMat: bulb.material, base: 3.5, warmup: 0 });
+    }
+
+    // a bare upstairs bedroom (east wing) + THE THING THAT BREATHES
+    house.add(spawn('GothicBed_01', { x: 10.4, y: deckY, z: -4.4, ry: Math.PI / 2 }));
+    ucbox(10.5, -4.5, 1.7, 2.2, false);
+    const mass = buildBreathingMass();
+    mass.group.position.set(10.1, deckY + 1.05, -1.7);  // set toward the east wall so there's a clear lane past it
+    mass.group.rotation.y = -Math.PI / 2;               // the face turns toward the doorway
+    house.add(mass.group);
+    ucbox(10.1, -1.7, 2.2, 2.2, false);
+    breathers.push(mass);
+    anchors.breather = { x: HX + 10.1, z: HZ - 1.7, y: FY + deckY + 1.0 };
+
+    // furnish the other upstairs rooms so they read as real (shuttered bedrooms + stores)
+    const up = (name, x, z, ry = 0) => house.add(spawn(name, { x, y: deckY, z, ry }));
+    up('GothicBed_01', -8.6, 3.4, -Math.PI / 2); ucbox(-8.7, 3.4, 2.2, 1.7, false);        // W-front bedroom
+    up('ClassicNightstand_01', -10.7, 4.7, 0.4); ucbox(-10.7, 4.7, 0.6, 0.5, false);
+    up('painted_wooden_cabinet', -3.4, 5.95, Math.PI); ucbox(-3.4, 5.95, 1.4, 0.6, false);
+    up('GothicBed_01', -6.5, -3.4, 0.05); ucbox(-6.5, -3.5, 1.7, 2.4, false);              // W-back bedroom
+    up('Rockingchair_01', -3.4, -2.0, 1.9); ucbox(-3.4, -2.0, 0.9, 0.9, false);
+    up('wooden_crate_01', -9.4, -5.5, 0.3); ucbox(-9.4, -5.5, 1.0, 1.0, false);
+    up('WoodenTable_02', 5.4, 5.2, 0); ucbox(5.4, 5.2, 1.1, 0.9, false);                   // E-front study/room
+    up('painted_wooden_chair_01', 5.3, 3.9, Math.PI); ucbox(5.3, 3.9, 0.6, 0.6, false);
+    up('wooden_crate_02', 4.3, -3.0, 0.4); ucbox(4.3, -3.0, 0.9, 0.9, false);              // E-back store
+    up('ClassicNightstand_01', 8.9, -5.3, 0.1); ucbox(8.9, -5.3, 0.6, 0.5, false);         // E-wing (bed + the mass)
+
+    // --- a tall mirror holding Anna's reflection. It is a STILL reflection — it does
+    // not move when you do (deliberately: cheaper than a render pass, and worse for it).
+    // A dim bust of Anna (coat, brimmed hat, her camera) in a deep dark frame + glass. ---
+    const dim = (hex, e = 0.3) => new THREE.MeshStandardMaterial({ color: hex, emissive: hex, emissiveIntensity: e, roughness: 0.8 });
+    const mir = new THREE.Group(); mir.position.set(-11.72, deckY, 1.0); mir.rotation.y = Math.PI / 2;  // faces +x into the room
+    const fw = 0.9, fh = 1.9, frameM = mat.woodDark;
+    mir.add(box(fw + 0.16, 0.1, 0.14, frameM, 0, fh, 0));                   // frame: top
+    mir.add(box(fw + 0.16, 0.1, 0.14, frameM, 0, 0.5, 0));                  // bottom
+    mir.add(box(0.1, fh - 0.4, 0.14, frameM, -fw / 2 - 0.03, (fh + 0.5) / 2, 0));   // left
+    mir.add(box(0.1, fh - 0.4, 0.14, frameM, fw / 2 + 0.03, (fh + 0.5) / 2, 0));    // right
+    mir.add(box(fw + 0.1, fh - 0.4, 0.02, dim(0x0a0e0f, 0.0), 0, (fh + 0.5) / 2, -0.28));   // recess back
+    const anna = new THREE.Group(); anna.position.set(0, 0.5, -0.16);
+    const coat = dim(0x21252b, 0.2);
+    anna.add(box(0.52, 0.5, 0.28, coat, 0, 0.55, 0));                       // coat shoulders
+    anna.add(cyl(0.15, 0.22, 0.4, coat, 0, 0.3, 0, 8));                     // coat taper
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), dim(0x9a8f80, 0.34)); head.position.set(0, 0.98, 0.02); anna.add(head);
+    anna.add(cyl(0.23, 0.23, 0.03, dim(0x15110d, 0.12), 0, 1.05, 0, 12));   // hat brim
+    anna.add(cyl(0.12, 0.14, 0.17, dim(0x15110d, 0.12), 0, 1.14, 0, 10));   // hat crown
+    anna.add(box(0.17, 0.12, 0.1, dim(0x0e0e10, 0.08), 0, 0.62, 0.17));     // her camera, at her chest
+    mir.add(anna);
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(fw, fh - 0.4), new THREE.MeshStandardMaterial({ color: 0x10161a, roughness: 0.12, metalness: 0.55, transparent: true, opacity: 0.42 }));
+    glass.position.set(0, (fh + 0.5) / 2, 0.04); mir.add(glass);
+    house.add(mir);
+    ucbox(-11.8, 1.0, 0.4, 1.3, false);
+  }
+
+  // combined floor override: the upstairs stair/deck/balcony first, else cellar/ground.
+  // Like the cellar, it tracks level by the stair ramp height (not the raw camera Y).
+  let upperLevel = false;
+  const houseFloorAt = (x, z) => {
+    const lx = x - HX, lz = z - HZ;
+    if (lx > STAIR.x0 && lx < STAIR.x1 && lz > STAIR.zTop && lz < STAIR.zBot) {
+      const ry = FY + STOREY_RISE * Math.max(0, Math.min(1, (STAIR.zBot - lz) / (STAIR.zBot - STAIR.zTop)));
+      if (ry > UPPER_FLOOR_Y - 1.0) upperLevel = true; else if (ry < FY + 1.0) upperLevel = false;
+      return ry;                                        // ride the stair
+    }
+    if (upperLevel) {
+      const inInterior = lx > -12 && lx < 12 && lz > -6.5 && lz < 6.5;
+      const inBalcony = lx > txMin - 0.15 && lx < txMax + 0.15 && lz > 6.4 && lz < 10.2;
+      if (inInterior || inBalcony) return UPPER_FLOOR_Y;
+    }
+    return cellar.floorAt(x, z);                        // ground / cellar
+  };
+
   // historical plaque by the path
   const plaque = makeSign(
     ['designed by A. Bustillo, c.1943', 'a fine example of lake architecture', '"the house has done nothing. it is the water."'],
@@ -1634,6 +1848,7 @@ export function buildBuildings(scene, colliders) {
         l.bulbMat.color.setHex(0x201a12);
       }
     }
+    for (const b of breathers) b.update(t);            // the upstairs thing breathes on its own clock
     for (const g of glowPlanes) g.opacity = power ? 0.75 + Math.sin(t * 9.1) * 0.08 : 0;
     // window glow visibility — toggle the collected glow meshes directly instead
     // of walking the whole mansion scene graph (+ allocating a closure) each frame
@@ -1662,6 +1877,7 @@ export function buildBuildings(scene, colliders) {
 
   return {
     doors, anchors, setPower, update, insideHouse, insideHouseM,
+    floorAt: houseFloorAt,                    // cellar + upstairs, in one override
     houseCenter: { x: HX, z: HZ },
     isPowered: () => power,
     lantern: { mat: lanternMat, light: lanternLight },
