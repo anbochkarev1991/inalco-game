@@ -17,10 +17,14 @@ const mat = {
   roof: new THREE.MeshStandardMaterial({ color: PAL.roof, roughness: 0.9, metalness: 0, flatShading: true }),
   shingle: new THREE.MeshStandardMaterial({ map: shinglesTex(), roughness: 0.92, metalness: 0 }),
   shutter: new THREE.MeshStandardMaterial({ map: shutterTex(), roughness: 0.85, metalness: 0 }),
+  greenWood: new THREE.MeshStandardMaterial({ color: 0x35503f, roughness: 0.8, metalness: 0 }),   // Bustillo green trim: posts, beams, bargeboards, fascia
   wood: new THREE.MeshStandardMaterial({ color: PAL.wood, roughness: 0.86, metalness: 0 }),
   woodDark: new THREE.MeshStandardMaterial({ color: PAL.woodDark, roughness: 0.86, metalness: 0 }),
   plank: new THREE.MeshStandardMaterial({ map: planksTex(0x6d5339), roughness: 0.85, metalness: 0 }),
   plankDark: new THREE.MeshStandardMaterial({ map: planksTex(0x453424), roughness: 0.85, metalness: 0 }),
+  // weathered wood-plank cladding for the house walls — the real Inalco is clad in
+  // old boards, not render. Silvered grey-tan so it stays pale/eerie against the forest.
+  plankWall: new THREE.MeshStandardMaterial({ map: (() => { const t = planksTex(0xa39a88); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t; })(), roughness: 0.9, metalness: 0 }),
   glass: new THREE.MeshStandardMaterial({ color: PAL.glass, roughness: 0.14, metalness: 0.5 }),
   metal: new THREE.MeshStandardMaterial({ color: 0x565c60, roughness: 0.42, metalness: 0.8, flatShading: true }),
   white: new THREE.MeshStandardMaterial({ color: 0x7f867f, roughness: 0.92, metalness: 0 }),
@@ -484,9 +488,14 @@ export function buildBuildings(scene, colliders) {
   // nothing. Interior partitions stay solid. All static wall geometry is merged
   // per material (one draw call each) to keep the added holes perf-neutral.
   const WIN = { ow: 1.0, sill: 0.9, head: 2.35, yc: 1.625, fh: 1.5 };
+  // the lake (front) windows are taller — a galleried elevation facing the water,
+  // like the real Inalco. Sill stays above the stone plinth; head lifts near the
+  // eave. Height only — X centres are unchanged, so the see-through / photo /
+  // window-gathering logic (all keyed to X) is untouched.
+  const WINF = { sill: 0.95, head: 2.82 };
   const winFrontL = [-9, -4.5], winFrontR = [5, 9.5];   // centres along wall run axis (local)
   const winBackL = [-9.5, -4], winBackR = [4, 9.5];
-  const winWest = [-3.5, 3.5], winEast = [-3.5, 3.5];
+  const winWest = [3.5], winEast = [-3.5, 3.5];   // NW opening dropped: the rear-west wing (below) covers that wall
 
   const extGeos = [];   // thick exterior shell -> mat.plaster
   const intGeos = [];   // thin partitions      -> mat.plasterIn
@@ -494,7 +503,7 @@ export function buildBuildings(scene, colliders) {
   // one exterior wall segment with rectangular window openings cut out. Piers get
   // sight-blocking colliders; the opening column blocks walking but CLEARS sight
   // (losClear is 2D, so sill/header panels must not block sight — see colliders.js).
-  const exteriorWall = (cx, cz, w, d, us) => {
+  const exteriorWall = (cx, cz, w, d, us, sill = WIN.sill, head = WIN.head) => {
     const alongX = w >= d;
     const len = alongX ? w : d, thick = alongX ? d : w;
     const c0 = (alongX ? cx : cz) - len / 2, c1 = c0 + len;
@@ -505,24 +514,24 @@ export function buildBuildings(scene, colliders) {
       else        { extGeos.push(boxGeo(thick, WALL_H, pw, cx, WALL_H / 2, pc)); cbox(cx, pc, thick, pw); }
     };
     let cursor = c0;
-    const overH = WALL_H - WIN.head;
+    const overH = WALL_H - head;
     for (const u of [...us].sort((a, b) => a - b)) {
       addPier(cursor, u - WIN.ow / 2);
       if (alongX) {
-        extGeos.push(boxGeo(WIN.ow, WIN.sill, thick, u, WIN.sill / 2, cz));                 // under-sill
-        if (overH > 0.01) extGeos.push(boxGeo(WIN.ow, overH, thick, u, WIN.head + overH / 2, cz)); // header
+        extGeos.push(boxGeo(WIN.ow, sill, thick, u, sill / 2, cz));                 // under-sill
+        if (overH > 0.01) extGeos.push(boxGeo(WIN.ow, overH, thick, u, head + overH / 2, cz)); // header
         cbox(u, cz, WIN.ow, thick, false);
       } else {
-        extGeos.push(boxGeo(thick, WIN.sill, WIN.ow, cx, WIN.sill / 2, u));
-        if (overH > 0.01) extGeos.push(boxGeo(thick, overH, WIN.ow, cx, WIN.head + overH / 2, u));
+        extGeos.push(boxGeo(thick, sill, WIN.ow, cx, sill / 2, u));
+        if (overH > 0.01) extGeos.push(boxGeo(thick, overH, WIN.ow, cx, head + overH / 2, u));
         cbox(cx, u, thick, WIN.ow, false);
       }
       cursor = u + WIN.ow / 2;
     }
     addPier(cursor, c1);
   };
-  exteriorWall(-5.8, 6.5, 12.4, 0.5, winFrontL);        // front, door gap x 0.4..1.6
-  exteriorWall(6.8, 6.5, 10.4, 0.5, winFrontR);
+  exteriorWall(-5.8, 6.5, 12.4, 0.5, winFrontL, WINF.sill, WINF.head);   // front (lake) gallery — taller
+  exteriorWall(6.8, 6.5, 10.4, 0.5, winFrontR, WINF.sill, WINF.head);
   exteriorWall(-6.35, -6.5, 11.3, 0.5, winBackL);       // back, door gap x -0.7..0.7
   exteriorWall(6.35, -6.5, 11.3, 0.5, winBackR);
   exteriorWall(-12, 0, 0.5, 13.5, winWest);             // west side
@@ -548,7 +557,7 @@ export function buildBuildings(scene, colliders) {
   // lintels above the two exterior doors (folded into the plaster merge)
   extGeos.push(boxGeo(1.6, WALL_H - 2.16, 0.5, 1, 2.16 + (WALL_H - 2.16) / 2, 6.5));
   extGeos.push(boxGeo(1.5, WALL_H - 2.16, 0.5, 0, 2.16 + (WALL_H - 2.16) / 2, -6.5));
-  mergeInto(house, extGeos, mat.plaster);
+  mergeInto(house, extGeos, mat.plankWall);   // exterior ground shell — weathered wood cladding
   mergeInto(house, intGeos, mat.plasterIn);
 
   // --- skirting boards + a picture rail lift the plain plaster shell. Thin wood
@@ -569,7 +578,7 @@ export function buildBuildings(scene, colliders) {
 
   // window placements: [wx, wz, ry] derived from the opening centres above
   const WINDOWS = [];
-  for (const u of [...winFrontL, ...winFrontR]) WINDOWS.push([u, 6.5, 0]);
+  for (const u of [...winFrontL, ...winFrontR]) WINDOWS.push([u, 6.5, 0, WINF.sill, WINF.head]);
   for (const u of [...winBackL, ...winBackR]) WINDOWS.push([u, -6.5, Math.PI]);
   for (const u of winWest) WINDOWS.push([-12, u, -Math.PI / 2]);
   for (const u of winEast) WINDOWS.push([12, u, Math.PI / 2]);
@@ -600,44 +609,121 @@ export function buildBuildings(scene, colliders) {
   house.add(ceil);
   for (const bx of [-9.5, -6.5, -3.5]) house.add(box(0.16, 0.22, 12.6, mat.woodDark, bx, WALL_H - 0.11, 0));
 
-  // stone base skirt (front AND back skirts split so neither door is blocked by
-  // a lip — the front gap aligns with the door frame at x 0.3..1.7)
-  for (const [cx, cz, w, d] of [
-    [-6.1, 6.62, 12.8, 0.6], [7.1, 6.62, 10.8, 0.6],     // front, door gap x 0.3..1.7
-    [-6.65, -6.62, 11.7, 0.6], [6.65, -6.62, 11.7, 0.6],
-    [-12.12, 0, 0.6, 13.8], [12.12, 0, 0.6, 13.8],
-  ])
-    house.add(box(w, 0.95, d, mat.stone, cx, 0.32, cz));
+  // ------------------------------------------------------------- Inalco shell
+  // Pushed toward the REAL Residencia Inalco (Bustillo, 1943): a tall, austere
+  // TWO-STOREY block under a massive brooding roof — pale render, a subtle stone
+  // base, a regular grid of tall lake windows in two rows, gabled dormers, and big
+  // stone chimneys. The interior stays ONE walkable floor (ceiling at WALL_H); the
+  // upper storey is a facade band above the ceiling with dark/false windows — the
+  // two-storey LOOK without a real upstairs. All new static geometry is merged per
+  // material (mergeInto calls after the wing) so the extra mass adds no draw calls.
+  const stoneGeos = [], shingleGeos = [], capGeos = [], greenGeos = [], rafterGeos = [], stuccoGeos = [], whiteGeos = [], glassGeos = [], shutterGeos = [];
+  const matStucco = (() => {   // same weathered planks on the gables/dormers; ShapeGeometry UVs are in metres, so tune the repeat for ~0.4 m boards
+    const t = mat.plankWall.map.clone(); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(0.42, 0.18); t.needsUpdate = true;
+    return new THREE.MeshStandardMaterial({ map: t, roughness: 0.9, metalness: 0, side: THREE.DoubleSide });
+  })();
+  const EXT_H = 6.2;                          // exterior eave (two storeys); interior ceiling stays WALL_H
 
-  // roof: shingled slabs + ridge cap + fascia boards
-  const eave = WALL_H, rise = 2.9, halfD = 7.4;
+  // upper-storey shell band (WALL_H..EXT_H): solid pale render, wrapping the ground
+  // shell built above so the block reads two storeys tall from the yard.
+  const uH = EXT_H - WALL_H, uY = WALL_H + uH / 2;
+  // segmented (~3 m bays) so the plank texture (0..1 UV per box) reads at a consistent board width, not stretched
+  for (let i = 0; i < 8; i++) { const x = -10.5 + i * 3; stuccoGeos.push(boxGeo(3, uH, 0.5, x, uY, 6.5)); stuccoGeos.push(boxGeo(3, uH, 0.5, x, uY, -6.5)); }
+  for (let i = 0; i < 5; i++) { const z = -5.4 + i * 2.7; stuccoGeos.push(boxGeo(0.5, uH, 2.7, -12, uY, z)); stuccoGeos.push(boxGeo(0.5, uH, 2.7, 12, uY, z)); }
+
+  // massive steep roof (~44°) springing from the TALL eave — it broods over the
+  // whole house. halfD is the wall half-depth, so the eave sits on the wall top.
+  const eave = EXT_H, rise = 6.4, halfD = 6.5;
   const slant = Math.hypot(halfD, rise), ang = Math.atan2(rise, halfD);
-  const roofS = box(26, 0.18, slant + 0.4, mat.shingle, 0, eave + rise / 2, halfD / 2, 0, ang);
-  const roofN = box(26, 0.18, slant + 0.4, mat.shingle, 0, eave + rise / 2, -halfD / 2, 0, -ang);
-  house.add(roofS, roofN);
-  house.add(box(26.3, 0.14, 0.44, mat.roof, 0, eave + rise + 0.05, 0));            // ridge cap
-  house.add(box(26, 0.2, 0.1, mat.woodDark, 0, eave + 0.02, 7.5));                 // fascia
-  house.add(box(26, 0.2, 0.1, mat.woodDark, 0, eave + 0.02, -7.5));
-  for (const sx of [-1, 1]) {
+  const ridgeY = eave + rise, roofX = 26.4, slabD = slant + 1.7;
+  shingleGeos.push(boxGeo(roofX, 0.2, slabD, 0, eave + rise / 2, halfD / 2, 0, ang));
+  shingleGeos.push(boxGeo(roofX, 0.2, slabD, 0, eave + rise / 2, -halfD / 2, 0, -ang));
+  capGeos.push(boxGeo(roofX + 0.3, 0.16, 0.5, 0, ridgeY + 0.03, 0));                // ridge cap
+  for (const sx of [-1, 1]) {                                                       // tall stucco gable ends
     const shape = new THREE.Shape();
     shape.moveTo(-6.6, 0); shape.lineTo(6.6, 0); shape.lineTo(0, rise);
-    const gable = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshLambertMaterial({ color: PAL.houseWall, side: THREE.DoubleSide }));
+    const gable = new THREE.Mesh(new THREE.ShapeGeometry(shape), matStucco);
     gable.rotation.y = sx * Math.PI / 2;
     gable.position.set(sx * 11.98, eave, 0);
     house.add(gable);
   }
-  const chimney = box(1.1, 3.6, 1.1, mat.stone, -10.6, eave + 1.5, 0);
-  house.add(chimney);
+  // deep eaves in DARK weathered wood (no bright trim — believable roof edge). Fascia
+  // caps the front/back overhangs; bargeboards sit at the true gable rake edge so they
+  // cover the shingle slab edges (no white/green lines along the roof).
+  rafterGeos.push(boxGeo(roofX, 0.34, 0.18, 0, eave - 0.5, halfD + 0.52));
+  rafterGeos.push(boxGeo(roofX, 0.34, 0.18, 0, eave - 0.5, -halfD - 0.52));
+  for (const sx of [-1, 1]) {
+    rafterGeos.push(boxGeo(0.18, 0.36, slant + 0.7, sx * 13.05, eave + rise / 2, halfD / 2, 0, ang));
+    rafterGeos.push(boxGeo(0.18, 0.36, slant + 0.7, sx * 13.05, eave + rise / 2, -halfD / 2, 0, -ang));
+  }
+
+  // subtle grey-stone base (a low plinth) — pale render dominates the tall walls,
+  // as on the real Inalco (stone reads at the foundation and chimneys, not all over).
+  for (const [cx, cz, w, d] of [
+    [-6.1, 6.62, 12.8, 0.58], [7.1, 6.62, 10.8, 0.58],     // front, door gap x 0.3..1.7
+    [-6.65, -6.62, 11.7, 0.58], [6.65, -6.62, 11.7, 0.58],
+    [-12.12, 0, 0.58, 13.8], [12.12, 0, 0.58, 13.8],
+  ])
+    stoneGeos.push(boxGeo(w, 0.72, d, cx, 0.36, cz));
+
+  // tall tapered stone chimneys, stepping in as they rise past the ridge (ridgeY ≈ 12.6).
+  const addChimney = (cx, cz, s, top) => {
+    const b0 = 3.0, b1 = b0 + (top - b0) * 0.55, b2 = top - 0.35;
+    stoneGeos.push(boxGeo(1.6 * s, b1 - b0, 1.45 * s, cx, (b0 + b1) / 2, cz));
+    stoneGeos.push(boxGeo(1.25 * s, b2 - b1, 1.15 * s, cx, (b1 + b2) / 2, cz));
+    stoneGeos.push(boxGeo(1.45 * s, 0.32, 1.35 * s, cx, b2 + 0.16, cz));            // cap
+  };
+  addChimney(-9.6, 0, 1.05, 13.7);
+  addChimney(10.4, -2.2, 0.85, 12.9);
+
+  // upper-storey window grid (a second row above the ground windows) + gabled
+  // dormers on the lake slope. These are the two features that most read as
+  // "Inalco". Upper windows are DARK (opaque) — the storey behind them is a sealed
+  // facade attic, so they look like unlit upstairs rooms. All merged per material.
+  const rotXZ = (ox, oz, ry) => [ox * Math.cos(ry) + oz * Math.sin(ry), -ox * Math.sin(ry) + oz * Math.cos(ry)];
+  const upWin = (wx, wz, ry, cy = 4.15) => {
+    const w2 = 1.0, h2 = 1.5;
+    const put = (bucket, w, h, d, ox, oy, oz) => { const [px, pz] = rotXZ(ox, oz, ry); bucket.push(boxGeo(w, h, d, wx + px, cy + oy, wz + pz, ry)); };
+    put(glassGeos, w2, h2, 0.05, 0, 0, 0);
+    put(rafterGeos, 0.09, h2 + 0.14, 0.1, -w2 / 2, 0, 0.05);
+    put(rafterGeos, 0.09, h2 + 0.14, 0.1, w2 / 2, 0, 0.05);
+    put(rafterGeos, w2 + 0.14, 0.09, 0.1, 0, h2 / 2, 0.05);
+    put(rafterGeos, w2 + 0.14, 0.09, 0.1, 0, -h2 / 2, 0.05);
+    put(whiteGeos, 0.05, h2, 0.04, 0, 0, 0.08);
+    put(whiteGeos, w2, 0.05, 0.04, 0, 0, 0.08);
+    put(whiteGeos, w2 + 0.3, 0.1, 0.2, 0, -h2 / 2 - 0.06, 0.06);                    // sill
+    put(shutterGeos, 0.42, h2, 0.06, -w2 / 2 - 0.24, 0, 0.06);
+    put(shutterGeos, 0.42, h2, 0.06, w2 / 2 + 0.24, 0, 0.06);
+  };
+  for (const wx of [-9, -4.5, 5, 9.5]) upWin(wx, 6.8, 0);         // front (lake) upper row — proud of the wall face
+  for (const wx of [-9.5, -4, 4, 9.5]) upWin(wx, -6.8, Math.PI);  // back upper row
+  for (const wz of [-3.5, 3.5]) upWin(12.3, wz, Math.PI / 2);     // east upper
+  upWin(-12.3, 3.5, -Math.PI / 2);                                // west upper (north bay hidden by the wing)
+
+  const addDormer = (dx, s = 1) => {
+    const dep = 1.5, faceZ = halfD + 0.28 * s, baseY = eave - 0.15, bodyH = 1.15 * s + 0.15, cz = faceZ - dep / 2;
+    stuccoGeos.push(boxGeo(1.4 * s, bodyH, dep, dx, baseY + bodyH / 2, cz));        // dormer body straddling the slope
+    const dH = 0.75 * s + 0.1, dR = 0.55 * s, dS = Math.hypot(dH, dR), dA = Math.atan2(dR, dH), topY = baseY + bodyH;
+    shingleGeos.push(boxGeo(dS + 0.2, 0.1, dep + 0.3, dx - dH / 2, topY + dR / 2, cz, 0, 0, dA));
+    shingleGeos.push(boxGeo(dS + 0.2, 0.1, dep + 0.3, dx + dH / 2, topY + dR / 2, cz, 0, 0, -dA));
+    const ds = new THREE.Shape(); ds.moveTo(-dH, 0); ds.lineTo(dH, 0); ds.lineTo(0, dR);
+    const dg = new THREE.Mesh(new THREE.ShapeGeometry(ds), matStucco); dg.position.set(dx, topY, faceZ + 0.02); house.add(dg);
+    glassGeos.push(boxGeo(0.62 * s, 0.85 * s, 0.05, dx, baseY + bodyH * 0.55, faceZ + 0.02));
+    rafterGeos.push(boxGeo(0.12, 0.92 * s, 0.06, dx - 0.42 * s, baseY + bodyH * 0.55, faceZ + 0.01));   // dark dormer-window jambs
+    rafterGeos.push(boxGeo(0.12, 0.92 * s, 0.06, dx + 0.42 * s, baseY + bodyH * 0.55, faceZ + 0.01));
+  };
+  addDormer(-7); addDormer(7); addDormer(1, 1.35);               // flanking pair + a bigger central dormer over the entry
 
   // window joinery set INTO each cut opening (WINDOWS built above): an OPEN frame
   // (4 rails, not a solid box — a solid box would replug the hole), transparent
   // glazing, muntins, sill, header, shutters, and a warm glow plane lit only when
   // powered (dim enough to still see out/in).
-  const railT = 0.1, fw = WIN.ow + 0.12, fh = WIN.fh, ft = 0.16;
-  for (const [wx, wz, ry] of WINDOWS) {
+  const railT = 0.1, fw = WIN.ow + 0.12, ft = 0.16;
+  for (const [wx, wz, ry, wSill = WIN.sill, wHead = WIN.head] of WINDOWS) {
     const g = new THREE.Group();
-    g.position.set(wx, WIN.yc, wz); g.rotation.y = ry;
-    const gh = WIN.head - WIN.sill;                        // glazed height
+    const fh = wHead - wSill + 0.05, yc = (wSill + wHead) / 2;   // per-window (front gallery is taller)
+    g.position.set(wx, yc, wz); g.rotation.y = ry;
+    const gh = wHead - wSill;                              // glazed height
     const frameTop = box(fw, railT, ft, mat.woodDark, 0, fh / 2 - railT / 2, 0);
     const frameBot = box(fw, railT, ft, mat.woodDark, 0, -fh / 2 + railT / 2, 0);
     const frameL = box(railT, fh, ft, mat.woodDark, -fw / 2 + railT / 2, 0, 0);
@@ -659,31 +745,51 @@ export function buildBuildings(scene, colliders) {
     house.add(g);
   }
 
-  // porch: deck, narrow steps, columns, balustrade, ceiling
-  const porch = new THREE.Group();
-  porch.position.set(0, 0, 0);
-  // deck raised a touch so its top surface (was exactly at ground level 2.10)
-  // no longer z-fights the terrain — that coplanar pair flickered under the torch
-  porch.add(box(5, 0.24, 3.0, mat.wood, 1.2, -0.07, 8.0));
-  porch.add(box(2.2, 0.18, 0.7, mat.wood, 1.2, -0.36, 9.6));
-  porch.add(box(2.2, 0.18, 0.7, mat.wood, 1.2, -0.62, 10.2));
-  for (const [px, pz] of [[-0.9, 9.2], [3.3, 9.2]]) {
-    porch.add(cyl(0.1, 0.12, 2.6, mat.white, px, 1.3, pz, 6));
+  // lakeside entry — a stone terrace + a covered gabled porch projecting toward
+  // the water (Bustillo's signature cross-gable), replacing the old white-columned
+  // colonial porch. Stone/roof/timber all feed the same merge buckets.
+  const txMin = -2.4, txMax = 4.4, tzIn = 6.55, tzOut = 10.0;
+  const tW = txMax - txMin, tCx = (txMin + txMax) / 2, tD = tzOut - tzIn, tCz = (tzIn + tzOut) / 2;
+  stoneGeos.push(boxGeo(tW + 0.5, 0.26, tD + 0.2, tCx, -0.06, tCz));             // flagstone deck (top ≈ 0.07, walkable)
+  const gapL = tCx - 1.05, gapR = tCx + 1.05;                                    // central step gap, on the door axis
+  stoneGeos.push(boxGeo(0.34, 0.66, tD, txMin, 0.33, tCz));                      // west parapet
+  stoneGeos.push(boxGeo(0.34, 0.66, tD, txMax, 0.33, tCz));                      // east parapet
+  stoneGeos.push(boxGeo(gapL - txMin, 0.66, 0.34, (txMin + gapL) / 2, 0.33, tzOut));
+  stoneGeos.push(boxGeo(txMax - gapR, 0.66, 0.34, (gapR + txMax) / 2, 0.33, tzOut));
+  stoneGeos.push(boxGeo(2.3, 0.18, 0.6, tCx, -0.12, tzOut + 0.4));               // step tread 1
+  stoneGeos.push(boxGeo(2.3, 0.18, 0.6, tCx, -0.30, tzOut + 0.95));              // step tread 2
+  cbox(txMin, tCz, 0.34, tD, false); cbox(txMax, tCz, 0.34, tD, false);
+  cbox((txMin + gapL) / 2, tzOut, gapL - txMin, 0.34, false);
+  cbox((gapR + txMax) / 2, tzOut, txMax - gapR, 0.34, false);
+  // square green timber posts + a beam ring
+  const postH = 2.7;
+  for (const [px, pz] of [[txMin + 0.28, tzIn + 0.35], [txMax - 0.28, tzIn + 0.35], [txMin + 0.28, tzOut - 0.35], [txMax - 0.28, tzOut - 0.35]]) {
+    greenGeos.push(boxGeo(0.18, postH, 0.18, px, postH / 2, pz));
+    cbox(px, pz, 0.26, 0.26, false);
   }
-  porch.add(box(5.6, 0.14, 3.6, mat.shingle, 1.2, 2.72, 8.2, 0, 0.12));
-  porch.add(box(5.2, 0.05, 3.2, mat.white, 1.2, 2.6, 8.1));                        // porch ceiling
-  // balustrade with an opening for the steps
-  const baluster = (px, pz) => porch.add(cyl(0.022, 0.028, 0.72, mat.white, px, 0.36, pz, 5));
-  for (const [cx, w] of [[-0.6, 1.2], [3.0, 1.2]]) {
-    porch.add(box(w, 0.07, 0.09, mat.white, cx, 0.78, 9.42));                      // front rails
-    for (let bx = cx - w / 2 + 0.12; bx < cx + w / 2; bx += 0.26) baluster(bx, 9.42);
+  greenGeos.push(boxGeo(tW - 0.4, 0.2, 0.16, tCx, postH, tzIn + 0.35));
+  greenGeos.push(boxGeo(tW - 0.4, 0.2, 0.16, tCx, postH, tzOut - 0.35));
+  greenGeos.push(boxGeo(0.16, 0.2, tD - 0.7, txMin + 0.28, postH, tCz));
+  greenGeos.push(boxGeo(0.16, 0.2, tD - 0.7, txMax - 0.28, postH, tCz));
+  // the entrance canopy doubles as the first-floor lake BALCONY (the real Inalco
+  // has a bedroom balcony over the water). Flat deck on the porch posts + green rail
+  // + a central upper French door onto it.
+  const balY = postH + 0.16;
+  shingleGeos.push(boxGeo(tW + 0.5, 0.16, tD + 0.4, tCx, balY, tCz + 0.1));         // deck / entrance canopy
+  greenGeos.push(boxGeo(tW + 0.5, 0.1, 0.14, tCx, balY + 0.08, tzOut + 0.2));       // deck fascia
+  const rTop = balY + 0.98;
+  for (const [mx, mz, lx, lz] of [
+    [tCx, tzOut, tW, 0], [txMin, (tzIn + 0.3 + tzOut) / 2, 0, tzOut - tzIn - 0.3], [txMax, (tzIn + 0.3 + tzOut) / 2, 0, tzOut - tzIn - 0.3],
+  ]) {
+    greenGeos.push(boxGeo(lx + 0.12, 0.09, lz + 0.12, mx, rTop, mz));               // balcony top rail
+    greenGeos.push(boxGeo(lx + 0.12, 0.07, lz + 0.12, mx, balY + 0.5, mz));         // mid rail
   }
-  for (const rx of [-1.18, 3.58]) {
-    porch.add(box(0.09, 0.07, 2.7, mat.white, rx, 0.78, 8.1));                     // side rails
-    for (let bz = 6.9; bz < 9.4; bz += 0.26) baluster(rx, bz);
-  }
-  house.add(porch);
-  cbox(-1.2, 8.2, 0.3, 2.6, false); cbox(3.6, 8.2, 0.3, 2.6, false); // porch column-ish rails
+  for (let bx = txMin + 0.2; bx <= txMax - 0.2; bx += 0.42) greenGeos.push(boxGeo(0.05, 0.95, 0.05, bx, balY + 0.5, tzOut));
+  for (const px of [txMin, txMax]) greenGeos.push(boxGeo(0.1, 0.98, 0.1, px, balY + 0.5, tzOut));
+  glassGeos.push(boxGeo(1.2, 1.95, 0.05, tCx, balY + 1.15, 6.82));                  // central French door onto the balcony
+  rafterGeos.push(boxGeo(0.1, 2.05, 0.1, tCx - 0.62, balY + 1.15, 6.84));
+  rafterGeos.push(boxGeo(0.1, 2.05, 0.1, tCx + 0.62, balY + 1.15, 6.84));
+  rafterGeos.push(boxGeo(1.34, 0.1, 0.1, tCx, balY + 2.12, 6.84));
 
   // porch light — a lantern hung from the porch ceiling, on a visible rod.
   // (previously a bare low-poly sphere floated unsupported above the door: it
@@ -720,6 +826,46 @@ export function buildBuildings(scene, colliders) {
   house.add(box(1.5, 0.16, 0.6, doorFrameM, 0, 2.28, -6.5));
   house.add(box(1.42, 0.07, 0.44, mat.stone, 0, 0.035, -6.52));
   doors.back = makeDoor(scene, colliders, { x: HX, z: HZ - 6.5, y: FY, axis: 'x', swing: 1, locked: false, name: 'back' });
+
+  // ---- rear-west service wing: a lower, closed stone volume that gives the house
+  // Inalco's sprawling L-plan silhouette. No interior (solid massing — cheap), so
+  // it reads as a wing from the yard; colliders sit on its three outer walls.
+  {
+    const xo = -16.6, xi = -12.0, zn = -6.6, zs = -1.0;
+    const w = xi - xo, cx = (xo + xi) / 2, d = zs - zn, cz = (zn + zs) / 2;
+    const wEave = 2.55, wStone = 1.45;
+    for (const [wx, wz, ww, wd] of [[cx, zn, w, 0.42], [cx, zs, w, 0.42], [xo, cz, 0.42, d + 0.42]]) {
+      stoneGeos.push(boxGeo(ww, wStone, wd, wx, wStone / 2, wz));                 // stone base
+      stuccoGeos.push(boxGeo(ww, wEave - wStone, wd, wx, (wEave + wStone) / 2, wz)); // stucco upper
+      cbox(wx, wz, ww, wd);
+    }
+    const wRise = 1.95, wHalf = d / 2 + 0.35;                                     // steep gable, ridge along X
+    const wSlant = Math.hypot(wHalf, wRise), wAng = Math.atan2(wRise, wHalf);
+    shingleGeos.push(boxGeo(w + 1.0, 0.16, wSlant + 0.4, cx, wEave + wRise / 2, cz + wHalf / 2, 0, wAng));
+    shingleGeos.push(boxGeo(w + 1.0, 0.16, wSlant + 0.4, cx, wEave + wRise / 2, cz - wHalf / 2, 0, -wAng));
+    capGeos.push(boxGeo(w + 1.2, 0.13, 0.4, cx, wEave + wRise + 0.02, cz));
+    const wshp = new THREE.Shape(); wshp.moveTo(-wHalf, 0); wshp.lineTo(wHalf, 0); wshp.lineTo(0, wRise);
+    const wg = new THREE.Mesh(new THREE.ShapeGeometry(wshp), matStucco);
+    wg.rotation.y = -Math.PI / 2; wg.position.set(xo - 0.02, wEave, cz); house.add(wg);   // west gable to the yard
+    greenGeos.push(boxGeo(0.13, 0.14, wSlant + 0.3, xo - 0.05, wEave + wRise / 2, cz + wHalf / 2, wAng));
+    greenGeos.push(boxGeo(0.13, 0.14, wSlant + 0.3, xo - 0.05, wEave + wRise / 2, cz - wHalf / 2, -wAng));
+    // one shuttered blind window for character (opaque — the wing has no interior)
+    house.add(box(0.66, 0.9, 0.06, mat.glass, xo - 0.06, 1.55, cz));
+    house.add(box(0.22, 0.94, 0.05, mat.shutter, xo - 0.09, 1.55, cz - 0.44));
+    house.add(box(0.22, 0.94, 0.05, mat.shutter, xo - 0.09, 1.55, cz + 0.44));
+  }
+
+  // flush the per-material merge buckets → one mesh each (the whole reshape adds
+  // zero draw calls beyond these six, all static and shadow-casting).
+  mergeInto(house, stoneGeos, mat.stone);
+  mergeInto(house, shingleGeos, mat.shingle);
+  mergeInto(house, capGeos, mat.roof);
+  mergeInto(house, greenGeos, mat.greenWood);
+  mergeInto(house, rafterGeos, mat.woodDark);
+  mergeInto(house, stuccoGeos, mat.plankWall);   // upper-storey band + wing — same wood cladding
+  mergeInto(house, whiteGeos, mat.white);
+  mergeInto(house, glassGeos, mat.glass);
+  mergeInto(house, shutterGeos, mat.shutter);
 
   // ------------------------------------------------------------ house rooms
   const addLamp = (lx, lz, intensity = 9, dist = 11) => {
