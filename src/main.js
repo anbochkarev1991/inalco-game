@@ -75,6 +75,8 @@ const buildings = buildBuildings(scene, colliders);
 const npcs = buildNPCs(scene, colliders);
 const player = new Player(camera, scene, colliders, world.groundHeight, audio);
 player.floorOverride = buildings.floorAt;   // multi-level: under-house cellar + the walkable second floor
+// the upstairs mirror renders an "Anna" proxy on layer 2; let the flashlight reach her there
+for (const L of [player.spot, player.handGlow, player.burst]) L?.layers?.enable(2);
 const dialog = new Dialog(audio);
 const fxpipe = createPostFX(renderer, scene, camera);
 const fx = fxpipe.fx;
@@ -694,6 +696,9 @@ function frame() {
     if (fireD < 4.5 && !player.dead) {
       player.composure = Math.min(100 + player.maxBonus, player.composure + 10 * dt);
     }
+
+    // upstairs mirror: drive the live reflection of Ana (only renders when she's near)
+    buildings.updateMirror(player.pos.x, player.pos.z, player.pos.y, player.yaw);
 
     // the thing that breathes upstairs — Ana reacts, terrified (each line fires once)
     const mb = buildings.anchors.breather;

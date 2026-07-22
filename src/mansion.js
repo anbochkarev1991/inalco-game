@@ -1,9 +1,30 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { Reflector } from 'three/addons/objects/Reflector.js';
 import { PAL, LAYOUT, TUNE } from './config.js';
 import { canvasTexture, makeSign, plasterTex, planksTex, shinglesTex, stoneTex, shutterTex, CELLAR } from './world.js';
 import { spawn } from './assets.js';
 import { buildCellarGirl } from './npcs.js';
+import { makeHead } from './npc/face.js';
+import { makeHat } from './npc/parts.js';
+
+// A simple standing "Anna" — the photographer we play — for the upstairs mirror's
+// live reflection. Reuses the NPC face/hat builders so she doesn't read as crude
+// primitives. Built facing +z; feet at y=0. Rendered ONLY by the mirror (layer 2).
+function buildAnnaProxy() {
+  const g = new THREE.Group();
+  const coat = new THREE.MeshStandardMaterial({ color: 0x24282e, roughness: 0.93, metalness: 0 });
+  const legs = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.17, 0.92, 8), coat); legs.position.y = 0.5; g.add(legs);
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.25, 0.72, 10), coat); torso.position.y = 1.16; g.add(torso);
+  const sh = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.34, 3, 8), coat); sh.rotation.z = Math.PI / 2; sh.position.y = 1.46; g.add(sh);
+  for (const sx of [-1, 1]) { const a = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.52, 3, 6), coat); a.position.set(sx * 0.24, 1.16, 0.03); a.rotation.x = 0.12; g.add(a); }
+  const { head } = makeHead({ skinTone: '#9c7c62', age: 0.3, iris: '#41352a', hair: 0x2a2018, hairStyle: 'scalp', neckLen: 0.09, shape: { faceLength: 1.0, jawWidth: 0.9, browHeavy: 0.8, noseLen: 0.95 }, ruddy: 0.1 });
+  head.position.set(0, 1.6, 0.03); g.add(head);
+  const hat = makeHat({ color: 0x2b2620, brimR: 0.25, crownR: 0.11, crownH: 0.14 }); hat.position.set(0, 1.72, 0.03); g.add(hat);
+  const cam = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.1, 0.08), new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.5 })); cam.position.set(0, 1.18, 0.24); g.add(cam);
+  const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.05, 10), new THREE.MeshStandardMaterial({ color: 0x0a0a0a })); lens.rotation.x = Math.PI / 2; lens.position.set(0, 1.18, 0.29); g.add(lens);
+  return g;
+}
 
 const HX = LAYOUT.house.x, HZ = LAYOUT.house.z, FY = LAYOUT.house.y; // floor Y
 const WALL_H = 3.2;
@@ -508,6 +529,7 @@ export function buildBuildings(scene, colliders) {
   const anchors = {};
   const lamps = [];        // {light, bulbMat, base}
   const breathers = [];    // { update(t) } — the upstairs thing that breathes
+  let updateMirror = () => {};   // per-frame: drive the upstairs mirror's live reflection
   const glowPlanes = [];   // glow materials (opacity flicker)
   const glowMeshes = [];   // the glow meshes themselves (visibility toggled with power)
   let power = false;
@@ -1409,30 +1431,38 @@ export function buildBuildings(scene, colliders) {
     up('wooden_crate_02', 4.3, -3.0, 0.4); ucbox(4.3, -3.0, 0.9, 0.9, false);              // E-back store
     up('ClassicNightstand_01', 8.9, -5.3, 0.1); ucbox(8.9, -5.3, 0.6, 0.5, false);         // E-wing (bed + the mass)
 
-    // --- a tall mirror holding Anna's reflection. It is a STILL reflection — it does
-    // not move when you do (deliberately: cheaper than a render pass, and worse for it).
-    // A dim bust of Anna (coat, brimmed hat, her camera) in a deep dark frame + glass. ---
-    const dim = (hex, e = 0.3) => new THREE.MeshStandardMaterial({ color: hex, emissive: hex, emissiveIntensity: e, roughness: 0.8 });
-    const mir = new THREE.Group(); mir.position.set(-11.72, deckY, 1.0); mir.rotation.y = Math.PI / 2;  // faces +x into the room
-    const fw = 0.9, fh = 1.9, frameM = mat.woodDark;
-    mir.add(box(fw + 0.16, 0.1, 0.14, frameM, 0, fh, 0));                   // frame: top
-    mir.add(box(fw + 0.16, 0.1, 0.14, frameM, 0, 0.5, 0));                  // bottom
-    mir.add(box(0.1, fh - 0.4, 0.14, frameM, -fw / 2 - 0.03, (fh + 0.5) / 2, 0));   // left
-    mir.add(box(0.1, fh - 0.4, 0.14, frameM, fw / 2 + 0.03, (fh + 0.5) / 2, 0));    // right
-    mir.add(box(fw + 0.1, fh - 0.4, 0.02, dim(0x0a0e0f, 0.0), 0, (fh + 0.5) / 2, -0.28));   // recess back
-    const anna = new THREE.Group(); anna.position.set(0, 0.5, -0.16);
-    const coat = dim(0x21252b, 0.2);
-    anna.add(box(0.52, 0.5, 0.28, coat, 0, 0.55, 0));                       // coat shoulders
-    anna.add(cyl(0.15, 0.22, 0.4, coat, 0, 0.3, 0, 8));                     // coat taper
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), dim(0x9a8f80, 0.34)); head.position.set(0, 0.98, 0.02); anna.add(head);
-    anna.add(cyl(0.23, 0.23, 0.03, dim(0x15110d, 0.12), 0, 1.05, 0, 12));   // hat brim
-    anna.add(cyl(0.12, 0.14, 0.17, dim(0x15110d, 0.12), 0, 1.14, 0, 10));   // hat crown
-    anna.add(box(0.17, 0.12, 0.1, dim(0x0e0e10, 0.08), 0, 0.62, 0.17));     // her camera, at her chest
-    mir.add(anna);
-    const glass = new THREE.Mesh(new THREE.PlaneGeometry(fw, fh - 0.4), new THREE.MeshStandardMaterial({ color: 0x10161a, roughness: 0.12, metalness: 0.55, transparent: true, opacity: 0.42 }));
-    glass.position.set(0, (fh + 0.5) / 2, 0.04); mir.add(glass);
-    house.add(mir);
-    ucbox(-11.8, 1.0, 0.4, 1.3, false);
+    // --- a REAL mirror (THREE.Reflector) on the west wall, holding a LIVE reflection
+    // of Anna that reacts as you move. The "Anna" proxy lives on layer 2 — the
+    // first-person camera never renders it, but the mirror's own camera does, so you
+    // see yourself in the glass. The reflector only renders when you're near (perf). ---
+    const mmX = -11.66, mmY = deckY + 1.15, mmZ = 1.0, gw = 0.86, gh = 1.7, frameM = mat.woodDark;
+    const mirror = new Reflector(new THREE.PlaneGeometry(gw, gh), { color: 0x5a5f63, textureWidth: 512, textureHeight: 512 });
+    mirror.position.set(mmX, mmY, mmZ); mirror.rotation.y = Math.PI / 2;   // glass faces +x, into the room
+    mirror.camera.layers.enable(2);          // the reflection ALSO renders the Anna proxy (layer 2)
+    mirror.visible = false;                  // gated on by proximity — no render cost otherwise
+    house.add(mirror);
+    // wood frame around the glass (in the mirror's plane: spans y and z)
+    const fx = -11.72;
+    house.add(box(0.12, 0.1, gw + 0.22, frameM, fx, mmY + gh / 2 + 0.05, mmZ));   // top
+    house.add(box(0.12, 0.1, gw + 0.22, frameM, fx, mmY - gh / 2 - 0.05, mmZ));   // bottom
+    house.add(box(0.12, gh + 0.2, 0.1, frameM, fx, mmY, mmZ - gw / 2 - 0.05));    // near side (−z)
+    house.add(box(0.12, gh + 0.2, 0.1, frameM, fx, mmY, mmZ + gw / 2 + 0.05));    // far side (+z)
+    ucbox(-11.82, 1.0, 0.35, 1.2, false);
+    // the reflected Anna — reused NPC face/hat so she doesn't read as crude blocks
+    const anna = buildAnnaProxy();
+    anna.traverse((o) => o.layers.set(2));   // only the mirror's camera sees her
+    anna.visible = false;
+    scene.add(anna);
+    const mmWX = HX + mmX, mmWZ = HZ + mmZ;
+    let litForMirror = false;
+    updateMirror = (px, pz, py, pyaw) => {
+      const on = py > 4 && Math.hypot(px - mmWX, pz - mmWZ) < 7.5;   // upstairs + within ~7.5 m
+      mirror.visible = on; anna.visible = on;
+      if (on) {
+        anna.position.set(px, py, pz); anna.rotation.y = pyaw + Math.PI;   // stand where you stand, face your facing
+        if (!litForMirror) { litForMirror = true; scene.traverse((o) => { if (o.isLight) o.layers.enable(2); }); }  // let the lights reach her (layer 2), once
+      }
+    };
   }
 
   // combined floor override: the upstairs stair/deck/balcony first, else cellar/ground.
@@ -1878,6 +1908,7 @@ export function buildBuildings(scene, colliders) {
   return {
     doors, anchors, setPower, update, insideHouse, insideHouseM,
     floorAt: houseFloorAt,                    // cellar + upstairs, in one override
+    updateMirror,                             // per-frame: drive the upstairs live mirror
     houseCenter: { x: HX, z: HZ },
     isPowered: () => power,
     lantern: { mat: lanternMat, light: lanternLight },
