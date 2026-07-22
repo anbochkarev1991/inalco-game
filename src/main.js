@@ -59,10 +59,48 @@ const camera = new THREE.PerspectiveCamera(71, window.innerWidth / window.innerH
 // a rig builds — the old first-spawn freeze; NPC wool maps before their bodies),
 // which Promise.all still guarantees. The 28 GLTF models are the bulk of the wait,
 // so they keep driving the visible n/total progress count.
+// ---------- boot loading screen ----------
+// #loader (index.html) is painted before any JS runs, so instead of a black
+// rectangle the player sees the wordmark + a progress bar from the first frame.
+// We drive its bar/status through the preload + warm-up, then fade it out.
+const loaderEl = document.getElementById('loader');
+const loaderFill = document.getElementById('loader-fill');
+const loaderStatus = document.getElementById('loader-status');
+function setLoader(msg, frac) {
+  if (loaderStatus && msg != null) loaderStatus.textContent = msg;
+  if (typeof frac === 'number' && loaderFill) {
+    loaderFill.style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
+  }
+}
+// The shader warm-up below reports no progress and would otherwise leave a full,
+// static bar for several seconds — which reads as "frozen". Keep the fill slowly
+// creeping toward (but never reaching) full over a long ease, so the wait stays
+// alive until warm-up finishes and the whole screen fades. The always-sweeping
+// shimmer (CSS) covers us even if the main thread stalls mid-compile.
+function trickleLoader(msg) {
+  if (loaderStatus && msg != null) loaderStatus.textContent = msg;
+  if (!loaderFill) return;
+  loaderFill.style.transition = 'width 9s linear';   // steady climb across the reserved span
+  void loaderFill.offsetWidth;                        // commit the current width first
+  loaderFill.style.width = '97%';
+}
+function hideLoader() {
+  if (!loaderEl || loaderEl.classList.contains('gone')) return;
+  loaderEl.classList.add('gone');
+  setTimeout(() => { loaderEl.style.display = 'none'; }, 800);
+}
+
 const startEl = document.getElementById('title-start');
 startEl.textContent = 'LOADING…';
+setLoader('entering the fog', 0.03);
 await Promise.all([
-  preloadAssets((n, total) => { startEl.textContent = `LOADING ${n}/${total}`; }),
+  // reserve the top ~22% of the bar for the shader warm-up that follows, so the
+  // preload doesn't hit 100% and then appear to hang while warm-up runs — the
+  // reserved span is where the bar visibly creeps during "preparing the night".
+  preloadAssets((n, total) => {
+    startEl.textContent = `LOADING ${n}/${total}`;
+    setLoader(`raising the estancia · ${n}/${total}`, total ? (n / total) * 0.78 : 0.03);
+  }),
   preloadMonsterTextures(),
   preloadNpcTextures(),
 ]);
@@ -222,11 +260,14 @@ async function warmUpRenderer() {
   for (const e of rigs) director.despawn(e);
 }
 startEl.textContent = 'PREPARING…';
+trickleLoader('preparing the night');
 try { await warmUpRenderer(); } catch (e) { console.warn('warm-up skipped:', e); }
 startEl.textContent = 'CLICK TO BEGIN';
 // warm-up is done and the rigs are despawned — lift the black fader that hid the
-// building scene so the title screen becomes visible (auto-start clears it too).
+// building scene so the title screen becomes visible (auto-start clears it too),
+// and fade out the boot loading screen that sat above it.
 ui.fade(false);
+hideLoader();
 
 // Adaptive quality (TIER LE). Wire the sole shadow caster (player's flashlight
 // spot) + the renderer into world so shadows can be scaled, then resolve/apply
@@ -239,6 +280,7 @@ quality.init({ renderer, scene, camera, world, fxpipe, applyResize });
 // ---------------------------------------------------------------- input
 const input = { f: false, b: false, l: false, r: false, run: false, e: false };
 let state = 'TITLE';   // TITLE | MENU | INTRO | PLAY | PAUSE | DEAD | END
+let contextLost = false;   // WebGL context dropped (backgrounded tab / GPU reset) — see below
 let overlay = null;    // null | 'options' | 'journal' (shown over MENU or PAUSE)
 let introT = 0;
 let introFired = new Set();
@@ -306,7 +348,7 @@ document.addEventListener('mousedown', (e) => {
   if (state === 'INTRO') { skipIntro(); return; }
   if (state === 'PAUSE') {
     // click empty space to resume, but never when a button/field was the target
-    if (!e.target.closest('button, input, .jtab')) requestLock();
+    if (!e.target.closest('button, input, .jtab')) { audio.ensure(); requestLock(); }
     return;
   }
   if (state === 'PLAY' && document.pointerLockElement === renderer.domElement && !ui.noteOpen) {
@@ -384,10 +426,78 @@ window.addEventListener('resize', applyResize);
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { saveCheckpoint(); journal.flush(); if (audio.ctx) audio.ctx.suspend().catch(() => {}); }
-  else if (audio.ctx) audio.ctx.resume().catch(() => {});
+  else {
+    if (audio.ctx) audio.ctx.resume().catch(() => {});
+    // a context loss that arrived while we were backgrounded was deferred (see
+    // below) — now that the player is looking again, do the reload.
+    if (needsReloadOnReturn) { needsReloadOnReturn = false; recoverFromContextLoss(); }
+  }
 });
 // tab close / refresh: last-chance checkpoint so "interrupt for a while" survives
 window.addEventListener('beforeunload', () => { saveCheckpoint(); journal.flush(); });
+
+// ------------------------------------------------- WebGL context loss / restore
+// Backgrounding a tab for a while, a laptop sleeping, or GPU-memory pressure
+// (this game holds a lot of procedural GPU state) can make the browser drop the
+// WebGL context. When that happens the canvas freezes on its last frame and, as
+// verified in testing, the postfx EffectComposer does NOT visually recover on the
+// browser's own restore event — it comes back transparent — so the game looks
+// frozen and input feels dead until a manual reload. That is exactly the "switch
+// away / idle → nothing works until I reload" report.
+//
+// The only reliable recovery for our pipeline is a clean rebuild via reload. We
+// preventDefault (so the browser keeps the surface alive), stop rendering, persist
+// a checkpoint, and reload into a resume so the player lands back where they were
+// (see resumeGame + boot routing) — never all the way back at the jetty. A loop
+// guard stops a genuinely broken GPU from reloading forever.
+let needsReloadOnReturn = false;
+let ctxReloadRecent = false;
+try {
+  const at = +sessionStorage.getItem('inalco.ctxReloadAt') || 0;
+  ctxReloadRecent = at > 0 && (Date.now() - at < 12000);
+} catch (_) {}
+
+function recoverFromContextLoss() {
+  // markPlaying() already set the "interrupted" marker when the run went live, so
+  // the reload resumes the checkpoint (never the jetty) if — and only if — a run
+  // was actually in progress. We just record the reload time for the loop guard.
+  try { saveCheckpoint(); journal.flush(); } catch (_) {}
+  try { sessionStorage.setItem('inalco.ctxReloadAt', String(Date.now())); } catch (_) {}
+  if (loaderEl) {                                         // reuse the boot screen as a "restoring" veil
+    loaderEl.style.display = '';
+    loaderEl.classList.remove('gone');
+    if (loaderStatus) loaderStatus.textContent = 'restoring graphics';
+  }
+  location.reload();
+}
+
+renderer.domElement.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();       // required, else the context is gone for good
+  contextLost = true;       // frame() stops drawing into the dead context
+  if (ctxReloadRecent) {
+    // we already reloaded for a context loss moments ago and it happened again —
+    // don't loop. Leave a clear, one-click way out instead of a black screen.
+    if (loaderEl) {
+      loaderEl.style.display = '';
+      loaderEl.classList.remove('gone');
+      loaderEl.style.cursor = 'pointer';
+      if (loaderStatus) loaderStatus.textContent = 'graphics lost — click to reload';
+      loaderEl.addEventListener('click', () => {
+        try { sessionStorage.removeItem('inalco.ctxReloadAt'); } catch (_) {}
+        recoverFromContextLoss();
+      }, { once: true });
+    }
+    return;
+  }
+  // reload now if the player is watching; otherwise wait until they return so we
+  // don't reload (and possibly re-lose) a throttled background tab.
+  if (!document.hidden) recoverFromContextLoss();
+  else needsReloadOnReturn = true;
+}, false);
+
+// If we survive a stretch of real play after a context-loss reload, forget the
+// recent-reload guard so a much-later loss is treated as fresh (auto-recovers).
+setTimeout(() => { try { sessionStorage.removeItem('inalco.ctxReloadAt'); } catch (_) {} }, 15000);
 
 // ---------------------------------------------------------------- states
 
@@ -448,6 +558,7 @@ function refreshPauseMeta() {
 // menu's ambient bed here.
 function showMenu() {
   state = 'MENU';
+  clearPlaying();       // sitting on the menu is not an interrupted run
   audio.ensure();
   audio.menuMusic(true);
   ui.fade(false);       // ensure the black fader is lifted so the menu is visible
@@ -456,6 +567,14 @@ function showMenu() {
   closeOverlay();
   menu.show();
 }
+
+// Mark / clear "this tab is mid-run". Kept in sessionStorage: it survives a
+// reload and Chrome's tab-discard-and-restore (both of which otherwise dump the
+// player back on the title screen — the "returns to the start" report), but is
+// gone on a genuinely fresh tab, which should still open on the title. Boot
+// routing reads it to resume the checkpoint instead of showing the title.
+function markPlaying() { try { sessionStorage.setItem('inalco.interrupted', '1'); } catch (_) {} }
+function clearPlaying() { try { sessionStorage.removeItem('inalco.interrupted'); } catch (_) {} }
 
 // Assemble + persist a checkpoint (see save.js). Only during a live run.
 function saveCheckpoint() {
@@ -496,6 +615,7 @@ function beginGame(snap = null) {
     requestLock();
     for (const [, fn] of INTRO_SCRIPT) introFired.add(fn);   // never replay the cutscene
     state = 'PLAY';
+    markPlaying();
     player.frozen = false;
     world.setFlashlight(player.flashOn);
     ui.showHud(true);
@@ -529,11 +649,34 @@ function skipIntro() {
 function finishIntro() {
   if (state === 'PLAY') return;
   state = 'PLAY';
+  markPlaying();
   player.frozen = false;
   player.flashOn = true;
   world.setFlashlight(true);
   ui.showHud(true);
   ui.say('', '(the shore is behind you — the house is up the path)', 4);
+}
+
+// Resume an interrupted run on boot (reload / tab-discard-restore / context-loss
+// recovery). The world is already built, so we just restore the checkpoint and
+// land on the PAUSE screen: a programmatic requestPointerLock without a fresh
+// user gesture would be rejected, so we let the player's first click re-lock and
+// drop into PLAY (pointerlockchange handles PAUSE→PLAY). This puts them back at
+// their checkpoint — not the jetty — one click away from playing.
+function resumeGame(snap) {
+  applySnapshot(snap);
+  for (const [, fn] of INTRO_SCRIPT) introFired.add(fn);   // never replay the cutscene
+  ui.hideTitle();
+  menu.hide();
+  ui.fade(false);
+  world.setFlashlight(player.flashOn);
+  ui.showHud(true);
+  player.frozen = false;
+  saveT = SAVE_EVERY;
+  markPlaying();
+  state = 'PAUSE';
+  refreshPauseMeta();
+  ui.showPause(true);
 }
 
 function endSequence() {
@@ -640,6 +783,9 @@ let terosT = 4 + Math.random() * 6;    // a4: teros-alarm cooldown (mid-range wa
 
 function frame() {
   requestAnimationFrame(frame);
+  // context dropped: keep the rAF alive but issue no GL calls — recoverFromContextLoss()
+  // reloads to rebuild the pipeline (the composer never recovers in place).
+  if (contextLost) return;
   const dt = Math.min(0.05, clock.getDelta());
   time += dt;
   ui.update(dt);
@@ -884,9 +1030,14 @@ function frame() {
 frame();
 
 // boot routing: auto-start (tests / restart), open the menu directly (?menu),
-// or wait on the title for the first click → showMenu().
+// resume an interrupted run (reload / tab-discard / context-loss recovery), or
+// wait on the title for the first click → showMenu().
+let wasInterrupted = false;
+try { wasInterrupted = sessionStorage.getItem('inalco.interrupted') === '1'; } catch (_) {}
 if (AUTO_START) beginGame(null);
 else if (SHOW_MENU) showMenu();
+else if (wasInterrupted && save.exists()) resumeGame(save.read());
+else clearPlaying();   // a genuinely fresh tab opens on the title, not a resume
 
 // debug/testing handle
 window.__niebla = { THREE, scene, camera, renderer, player, story, director, audio, world, buildings, npcs, dialog, fx, night, vignettes, reveals, revisit, save, journal, quality, beginGame, showMenu, saveCheckpoint, skipIntro, get state() { return state; } };
