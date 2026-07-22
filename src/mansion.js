@@ -1540,9 +1540,12 @@ export function buildBuildings(scene, colliders) {
   colliders.addBox(B.x + 3.55, B.z + 0.5, 0.95, 3.1, { blocksSight: false });
   // the clutter a boathouse earns over decades
   bh.add(spawn('metal_toolbox', { x: 3.55, y: 0.82, z: -0.4, ry: 0.25 }));
-  bh.add(spawn('barrel_03', { x: -3.6, z: -2.7 }));
-  bh.add(spawn('barrel_03', { x: -3.0, z: -2.2, ry: 1.2 }));
-  colliders.addCircle(B.x - 3.5, B.z - 2.5, 0.5);
+  // barrels tucked against the north wall, EAST of the jerry can (local ~0.6,-2.6) so
+  // they never block the west door → fuel-can path (they used to sit in the doorway,
+  // making the can unreachable).
+  bh.add(spawn('barrel_03', { x: 1.6, z: -3.05 }));
+  bh.add(spawn('barrel_03', { x: 2.3, z: -3.0, ry: 1.2 }));
+  colliders.addCircle(B.x + 1.95, B.z - 3.05, 0.5);
   bh.add(spawn('wooden_crate_01', { x: 3.6, z: -2.75, ry: 0.15 }));
   bh.add(spawn('wooden_crate_02', { x: 3.55, y: 0.52, z: -2.7, ry: 0.5 }));
   bh.add(spawn('old_military_crate', { x: -3.4, z: 1.9, ry: -0.2 }));
