@@ -13,6 +13,7 @@
     "monstershots": "node scripts/monstershots.mjs",
     "npcshots": "node scripts/npcshots.mjs",
     "buildshots": "node scripts/buildshots.mjs",
+    "thingshots": "node scripts/thingshots.mjs",
     "cemshots": "node scripts/cemshots.mjs",
     "teasershots": "node scripts/teasershots.mjs",
     "build-teaser": "node scripts/build-teaser.mjs",

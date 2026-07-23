@@ -259,6 +259,23 @@ export function buildReveals(scene, ctx) {
     });
   }
 
+  // --- 6) the thing in the upstairs east room ------------------------------
+  // No overlay mesh: the difference lives in the thing itself — main.js asks
+  // it for its photo-form (open eyes, every face on the lens) around the
+  // capture render. `when` gates on being upstairs, since the x/z cone test
+  // would otherwise fire through the ceiling from the ground floor.
+  {
+    const x = HX + 10.1, z = HZ - 0.35;
+    const empty = new THREE.Group();
+    scene.add(empty);
+    add({
+      id: 'mass', mesh: empty, x, z, range: 9, cos: 0.55,
+      when: () => camera.position.y > 6,
+      caption: 'FRAME — "THE GUEST ROOM". Their eyes are open. Every one of them is looking at the camera.',
+      line: 'Through the lens the sockets were empty. In the photo there are eyes in all of them. On me.',
+    });
+  }
+
   // -------------------------------------------------------------- runtime
   let active = null;
 
@@ -276,6 +293,7 @@ export function buildReveals(scene, ctx) {
       let best = null, bestDot = -2;
       for (const r of list) {
         if (r.fired) continue;
+        if (r.when && !r.when()) continue;   // extra gate (e.g. must be upstairs)
         const dx = r.x - camPos.x, dz = r.z - camPos.z;
         const d = Math.hypot(dx, dz);
         if (d > r.range) continue;

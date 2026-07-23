@@ -138,6 +138,10 @@ const NOTES = {
     kind: 'FOUND NOTE', title: 'Caretaker’s reminder',
     body: 'Salt across every threshold before the fog. The back door twice — it forgets.\n\nThe little one in the cellar is not to be spoken to. She will ask you to. She will make it very easy.\n\nAnswer nothing. Keep your questions to yourself. She keeps count of theirs.',
   },
+  thingNote: {
+    kind: 'FOUND NOTE', title: 'In the caretaker’s hand, folded twice',
+    body: 'Do not sleep in the east room upstairs. It is not mould. It is not damp. It breathes — two breaths, not one. Count them if you doubt me.\n\nI have stopped going up. It has never once come down. That is the arrangement, and I keep my side of it.\n\nIf you hear it through the ceiling, leave it be. It only watches.\n\nAnd whatever your curiosity asks of you — do not take its picture.',
+  },
   cellarNote: {
     kind: 'CHALK ON STONE', title: 'A child’s hand, on the cellar wall',
     body: 'a drawing: a tall woman by the water, holding a small hand. the small figure has no face, only two black circles for eyes.\n\nunder it, in an adult’s hand, pressed hard:\n\nSHE ASKS. DON’T LET HER GET TO FIVE.\n\nnearer the floor, chalk almost gone:\n\ni asked six. i’m sorry.',
@@ -1174,6 +1178,14 @@ export class Story {
       marker: false,
       label: 'read the reminder', mesh: paperMesh(),
       action: (d) => this.pickupNote(d, 'pantryNote'),
+    });
+    // the rumor of the thing upstairs (THING_PLAN §2.8) — dropped on the
+    // bedroom boards, right under the ceiling stain. Never a marker.
+    this.addItem({
+      id: 'thingNote', x: A.thingNote.x, z: A.thingNote.z, y: A.thingNote.y,
+      marker: false,
+      label: 'read the folded warning', mesh: paperMesh(),
+      action: (d) => this.pickupNote(d, 'thingNote'),
     });
     this.addItem({
       id: 'groceries', x: A.kitchenNote.x, z: A.kitchenNote.z, y: A.kitchenNote.y, evidence: true,

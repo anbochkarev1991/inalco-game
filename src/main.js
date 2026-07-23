@@ -160,6 +160,29 @@ const CREDITS_HTML = `
 const WINDOW_POST_Z = LAYOUT.house.z + 7.7;   // front wall face ≈ z −7.25; posts ≈ 0.95 m in front
 const windowPosts = [-8.5, -4.5, 5.5, 10].map((wx) => ({ x: LAYOUT.house.x + wx, z: WINDOW_POST_Z }));
 let _massSeen = 0;   // staged one-time reactions to the breathing thing upstairs
+// persistent ctx handed to buildings.update each frame for the upstairs thing
+// (fields refreshed in place — no per-frame allocation)
+const thingCtx = {
+  playerPos: null, camDir: new THREE.Vector3(), upstairs: false,
+  // the thing's scripted beats land here (see thething.js)
+  onEvent: (name) => {
+    if (name === 'lurch') {
+      // the ENTRY LURCH — the "RUN" beat: it heaved toward the door. Loud,
+      // hurting, unmistakable. (Proper massChorus voice lands at T11.)
+      _massSeen = Math.max(_massSeen, 2);
+      ui.say('ANA', 'It moved. It moved AT me— out. OUT—', 3.6);
+      fx.glitch = Math.max(fx.glitch, 0.95);
+      fx.damage = Math.max(fx.damage, 0.5);
+      player.fearDrain(1.0, 9);                   // a sharp one-time composure hit
+      audio.massCut();                            // the breath stops DEAD...
+      audio.massScream(0, 0.35);                  // ...half a second, then the heave's voice
+    } else if (name === 'shift') {
+      // it repositioned while unobserved — a wet cue, no fanfare
+      fx.glitch = Math.max(fx.glitch, 0.18);
+      audio.massShift(0.2);
+    }
+  },
+};
 
 const director = new Director(scene, colliders, world.groundHeight, audio, {
   getPlayer: () => ({ pos: player.pos, dir: player.camDir(), flashOn: player.flashOn }),
@@ -364,6 +387,15 @@ document.addEventListener('mousedown', (e) => {
       fx.flash = Math.max(fx.flash, 0.85);
       const hits = director.flash(player.camera.position, player.camDir());
       buildings.cellar.girl.flash(player.camera.position, player.camDir());
+      // the thing upstairs: photographing it triggers the in-place convulsion
+      // (it NEVER leaves its spot); diminishing response — it learns the flash
+      const convulsed = buildings.thing
+        ? buildings.thing.flash(player.camera.position, player.camDir()) : 0;
+      if (convulsed) {
+        fx.glitch = Math.max(fx.glitch, 0.4 + 0.5 * convulsed);
+        fx.damage = Math.max(fx.damage, 0.35 * convulsed);
+        if (convulsed > 0.3) audio.massScream(0);   // the many-throated in-place scream
+      }
       if (hits.length) {
         // an actual enemy photo wins and makes its own polaroid (onFirstPhoto)
         if (!story.firstPhotoDone) {
@@ -753,6 +785,24 @@ function ambienceParams(nd) {
   if (chase || manifestNear) insects = 0;
   if (inside) insects *= 0.45;
 
+  // the thing that breathes upstairs: its wet bed bleeds through the house —
+  // clearly audible in the upstairs corridor BEFORE the doorway (the rumor),
+  // faint through the ground-floor ceiling below it. Gain rides the thing's
+  // VISIBLE breath so ear and eye agree; pan follows the camera-right basis.
+  let mass = 0, massPan = 0;
+  const mb = buildings.anchors.breather;
+  if (mb && buildings.thing) {
+    const mdx = mb.x - p.x, mdz = mb.z - p.z;
+    const md = Math.hypot(mdx, mdz);
+    if (md < 15) {
+      const upstairs = p.y > 4;
+      const breath = 0.4 + 0.6 * buildings.thing.breathLevel();
+      mass = (upstairs ? 0.55 : 0.16) * Math.max(0, 1 - md / 15) * breath;
+      const cd = player.camDir();
+      massPan = Math.max(-1, Math.min(1, (mdx * -cd.z + mdz * cd.x) / (md || 1))) * 0.8;
+    }
+  }
+
   return {
     wind: inside ? 0.3 : 1,
     lake: inside ? 0.05 : Math.max(0, 1 - shoreDist / 45),
@@ -764,6 +814,7 @@ function ambienceParams(nd) {
     fire: Math.max(0, 1 - Math.hypot(p.x - npcs.campfire.x, p.z - npcs.campfire.z) / 14),
     insects,
     staticL,
+    mass, massPan,
   };
 }
 
@@ -830,7 +881,11 @@ function frame() {
     const liveInput = state === 'PLAY' ? input : { f: false, b: false, l: false, r: false, run: false };
     player.surface = surfaceAt(player.pos);
     player.update(dt, liveInput);
-    buildings.update(dt);
+    thingCtx.playerPos = player.pos;
+    player.camDir(thingCtx.camDir);
+    thingCtx.upstairs = player.pos.y > 4 && !player.dead;
+    thingCtx.tier = quality.getTier();
+    buildings.update(dt, thingCtx);
     director.update(dt, time);
     story.update(dt, player.pos);
     revisit.update(dt);           // b3: apply staged one-time changes while Ana is away
@@ -850,13 +905,13 @@ function frame() {
     const mb = buildings.anchors.breather;
     if (mb && player.pos.y > 4 && !player.dead) {
       const md = Math.hypot(player.pos.x - mb.x, player.pos.z - mb.z);
-      if (_massSeen < 1 && md < 5.5) {
+      if (_massSeen < 1 && md < 6.5) {
         _massSeen = 1;
-        ui.say('ANA', 'Something in here is breathing. Slow. Wet. That is not — that is not furniture.', 4.4);
-        fx.glitch = Math.max(fx.glitch, 0.5);
-      } else if (_massSeen < 2 && md < 2.9) {
-        _massSeen = 2;
-        ui.say('ANA', 'It has a face. It turned it toward me. It isn’t anything — there’s no word for it — I have to get out, I have to get out—', 5.2);
+        ui.say('ANA', 'Something in here is breathing. Slow. Wet. Two rhythms — more than one sleeper.', 4.4);
+        fx.glitch = Math.max(fx.glitch, 0.4);
+      } else if (_massSeen < 3 && md < 2.9) {
+        _massSeen = 3;
+        ui.say('ANA', 'It has faces. They turn to follow me. I have to get out, I have to get out—', 5.0);
         fx.glitch = Math.max(fx.glitch, 0.9);
       }
       // it feeds: standing close to it drains life, very slowly (≈6%/10s at the edge,
@@ -1001,6 +1056,7 @@ function frame() {
     let savedFlash = 0;
     if (rev) {
       reveals.showActive();
+      if (rev.id === 'mass') buildings.thing?.setPhotoForm();   // in the photo, the sockets have eyes
       savedFlash = fx.flash;
       fx.flash = 0.1;
       fxpipe.render(dt, time);
@@ -1021,6 +1077,7 @@ function frame() {
     } catch (e) { /* capture is a nicety */ }
     if (rev) {
       reveals.hideActive();          // gone for good — never shown live
+      if (rev.id === 'mass') buildings.thing?.clearPhotoForm();
       fx.flash = savedFlash;
       fxpipe.render(dt, time);       // present a reveal-free frame (still flash-lit)
     }

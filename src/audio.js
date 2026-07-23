@@ -63,6 +63,14 @@ export class GameAudio {
       this.fire.filter.type = 'lowpass';
       this._firePopT = 0;
 
+      // --- the thing upstairs: a wet two-layer breath bed. Gain rides p.mass
+      // (main.js syncs it to the thing's VISIBLE breath), so what bleeds
+      // through the floorboards is the same breath you meet when you find it.
+      this.massBed = this._loopNoise(250, 1.6, 0.0);
+      this.massBed.filter.type = 'lowpass';
+      this.massBed2 = this._loopNoise(96, 1.1, 0.0);
+      this.massBed2.filter.type = 'lowpass';
+
       // --- night insects: a quiet cricket shimmer + steady field hiss. Its
       // ABSENCE is the scare — main.js ducks it to silence when a Returned is
       // near/manifesting or the tide spikes, then lets it fade back in during
@@ -706,6 +714,35 @@ export class GameAudio {
     for (let i = 0; i < 3; i++) this._burst(0.08, 2400, 9, 0.22, { pan, delay: 0.7 + i * 0.1 });
   }
 
+  // --- the Unfinished (the thing upstairs) --------------------------------
+  // massCut: the breath bed stops DEAD — the half-second of silence before
+  // the entry lurch. The bed ramps back on its own via update()'s p.mass.
+  massCut() {
+    if (!this.ok || !this.massBed) return;
+    const t = this.ctx.currentTime;
+    for (const b of [this.massBed, this.massBed2]) {
+      b.gain.gain.cancelScheduledValues(t);
+      b.gain.gain.setValueAtTime(0.0001, t);
+    }
+  }
+  // one wet reposition while unobserved: a slide, and the boards take weight
+  massShift(pan = 0) {
+    this._burst(0.5, 300, 2.5, 0.6, { pan, glideTo: 120 });
+    this._burst(0.34, 700, 4, 0.26, { pan, delay: 0.05, glideTo: 300 });
+    this._tone(84, 0.5, { type: 'triangle', gain: 0.15, glideTo: 66, pan, attack: 0.02, delay: 0.1 });
+  }
+  // the convulsion/lurch voice: several throats at once, none in tune, over
+  // one deep body exhale — LOUD (this is the "run" beat), wet, and it never
+  // moves toward you
+  massScream(pan = 0, delay = 0) {
+    for (let i = 0; i < 3; i++) {
+      this._burst(0.9 + i * 0.2, 660 - i * 150, 5, 1.0 - i * 0.19,
+        { pan: pan + (i - 1) * 0.22, glideTo: 220 - i * 55, delay: delay + i * 0.07 });
+    }
+    this._tone(62, 1.5, { type: 'sawtooth', gain: 0.4, glideTo: 44, pan, attack: 0.06, delay });
+    this._burst(1.7, 150, 1.1, 0.55, { pan, glideTo: 66, delay: delay + 0.3 });
+  }
+
   hitSting() {
     this._burst(0.09, 2800, 1, 0.35, { type: 'highpass' });
     this._burst(0.4, 500, 1.2, 0.3, { glideTo: 120 });
@@ -821,6 +858,14 @@ export class GameAudio {
         this._burst(0.03 + Math.random() * 0.04, 900 + Math.random() * 1800, 1.5, 0.08 * fireLvl);
       }
     }
+
+    // the thing that breathes upstairs — wet, close, panned toward the room
+    const massLvl = p.mass ?? 0;
+    this.massBed.gain.gain.setTargetAtTime(0.11 * massLvl, t, 0.2);
+    this.massBed2.gain.gain.setTargetAtTime(0.07 * massLvl, t, 0.3);
+    const mPan = p.massPan ?? 0;
+    this.massBed.pan.pan.value = mPan;
+    this.massBed2.pan.pan.value = mPan * 0.6;
 
     // whispering — syllable-like flutter, panned wide
     const wLvl = p.whisper ?? 0;

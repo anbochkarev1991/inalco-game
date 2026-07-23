@@ -81,7 +81,10 @@ async function renderInPage(page, shot) {
       m.connect(offline.destination);
       A.master = m;
       try {
-        A.monsterVoice(shot.kind, shot.pan ?? 0, shot.opts ?? {});
+        // default: a monsterVoice shot. `method` generalizes the harness to any
+        // GameAudio one-shot: { method: 'massScream', args: [0, 0.35] }.
+        if (shot.method) A[shot.method](...(shot.args ?? []));
+        else A.monsterVoice(shot.kind, shot.pan ?? 0, shot.opts ?? {});
       } catch (e) {
         threw = (e && (e.stack || e.message)) || String(e);
       }

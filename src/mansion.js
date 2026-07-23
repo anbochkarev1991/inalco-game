@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { PAL, LAYOUT, TUNE } from './config.js';
 import { canvasTexture, makeSign, plasterTex, planksTex, shinglesTex, stoneTex, shutterTex, CELLAR } from './world.js';
@@ -7,6 +7,7 @@ import { spawn } from './assets.js';
 import { buildCellarGirl } from './npcs.js';
 import { makeHead } from './npc/face.js';
 import { makeHat } from './npc/parts.js';
+import { buildTheThing } from './thething.js';
 
 // A simple standing "Anna" — the photographer we play — for the upstairs mirror's
 // live reflection. Reuses the NPC face/hat builders so she doesn't read as crude
@@ -477,92 +478,12 @@ function buildPiano() {
   };
 }
 
-// A breathing, faced thing that is not an anything — ONE continuous, slumped, wet
-// organic mesh: lumpy tumorous growths + boils, a wrong asymmetric face carved into
-// the surface, and a mottled skin of several sickly colours (bruise-purple, bile
-// yellow-green, raw-meat red, infected pink, grey rot) painted per-vertex. It swells
-// with an uneven, wrong breath. Returns { group, update(t) }.
-function buildBreathingMass() {
-  const g = new THREE.Group();
-  let geo = new THREE.IcosahedronGeometry(1.0, 4);
-  geo = mergeVertices(geo);                             // weld split verts so normals shade SMOOTH (not faceted)
-  const pos = geo.attributes.position, v = new THREE.Vector3();
-  let seed = 92821; const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
-  // face (carved INWARD) on the +z side
-  const eyeA = new THREE.Vector3(-0.34, 0.42, 0.82).normalize();   // higher/front so they read on the flat mass
-  const eyeB = new THREE.Vector3(0.30, 0.26, 0.90).normalize();
-  const mDir = new THREE.Vector3(0.0, -0.02, 0.99).normalize();
-  // tumorous growths bulge OUTWARD in odd directions (localised, so they read as lumps)
-  const growths = [
-    { d: new THREE.Vector3(-0.6, 0.5, -0.3).normalize(), amp: 0.42, k: 8 },
-    { d: new THREE.Vector3(0.7, -0.25, 0.35).normalize(), amp: 0.36, k: 10 },
-    { d: new THREE.Vector3(0.15, 0.85, -0.4).normalize(), amp: 0.30, k: 12 },
-    { d: new THREE.Vector3(-0.35, -0.55, 0.55).normalize(), amp: 0.30, k: 9 },
-    { d: new THREE.Vector3(0.55, 0.4, 0.6).normalize(), amp: 0.24, k: 13 },
-  ];
-  // a palette of disgusting colours, blended across the surface by noise fields
-  const cRot = new THREE.Color(0x231d24);    // dark grey rot
-  const cBruise = new THREE.Color(0x3a1533); // bruise purple
-  const cBile = new THREE.Color(0x49531d);   // bile / necrotic yellow-green
-  const cRaw = new THREE.Color(0x611414);    // raw-meat red
-  const cInf = new THREE.Color(0x6b2a46);    // infected pink
-  const cVoid = new THREE.Color(0x060304);   // near-black — the sockets & mouth read as holes
-  const colors = [], c = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i); const n = v.clone().normalize();
-    let r = 1.0
-      + 0.30 * Math.sin(n.x * 2.0 + 1) * Math.cos(n.y * 1.6)     // big lobes
-      + 0.24 * Math.sin(n.z * 2.3 + n.x * 1.2)
-      + 0.13 * Math.sin(n.y * 3.1 + n.z * 2.5)
-      + 0.06 * Math.sin(n.x * 6.1 + n.y * 5.3)                   // boils
-      + 0.03 * (rnd() - 0.5);
-    for (const gr of growths) r += gr.amp * Math.pow(Math.max(0, n.dot(gr.d)), gr.k);   // tumours
-    const dA = Math.pow(Math.max(0, n.dot(eyeA)), 11);          // wide, deep eye sockets
-    const dB = Math.pow(Math.max(0, n.dot(eyeB)), 13);
-    const md = Math.max(0, n.dot(mDir));
-    const dM = Math.pow(md, 5) * Math.exp(-Math.pow(n.y - mDir.y, 2) * 38);   // a wide horizontal gash
-    r -= 0.52 * dA; r -= 0.46 * dB; r -= 0.66 * dM;             // carve the face deep so it reads
-    v.copy(n).multiplyScalar(r);
-    v.y *= 0.42; if (v.y < 0) v.y *= 1.12;                       // MUCH flatter — a low mass pooled across the floor
-    pos.setXYZ(i, v.x, v.y, v.z);
-    // ---- per-vertex sickly colour blend ----
-    const w1 = 0.5 + 0.5 * Math.sin(n.x * 3.1 + n.y * 2.3 + 1.0);
-    const w2 = 0.5 + 0.5 * Math.sin(n.z * 4.2 - n.y * 3.7 + 2.0);
-    const w3 = Math.pow(Math.max(0, Math.sin(n.x * 5.0 + n.z * 4.2 - 1.0)), 3);   // sparse raw-red patches
-    const w4 = Math.pow(Math.max(0, Math.sin(n.y * 4.6 + n.z * 5.1 + 0.5)), 4);   // sparse infected-pink
-    c.copy(cRot).lerp(cBruise, w1);
-    c.lerp(cBile, w2 * 0.55);
-    c.lerp(cRaw, w3 * 0.8);
-    c.lerp(cInf, w4 * 0.6);
-    c.lerp(cRaw, Math.min(0.6, md * md * 0.8));                 // raw rim around the mouth
-    c.lerp(cVoid, Math.min(0.92, Math.max(dA, dB, dM * 1.15) * 1.2));   // sink the eyes & mouth to dark
-    colors.push(c.r, c.g, c.b);
-  }
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  geo.computeVertexNormals();
-  const skin = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.02, emissive: 0x180406, emissiveIntensity: 0.14 });   // matte-wet so the sickly colours read under the torch, not a white blowout
-  const body = new THREE.Mesh(geo, skin); body.castShadow = true; body.receiveShadow = true; g.add(body);
-  // two mismatched eyes deep in the sockets: one milky-blind, one wet-dark
-  const pmDark = new THREE.MeshStandardMaterial({ color: 0x0d0405, roughness: 0.1, metalness: 0.55, emissive: 0x3a050b, emissiveIntensity: 0.8 });
-  const pmMilk = new THREE.MeshStandardMaterial({ color: 0xb7b09a, roughness: 0.32, emissive: 0x4a4028, emissiveIntensity: 0.55 });
-  const pupil = (dir, s, mat) => { const m = new THREE.Mesh(new THREE.SphereGeometry(s, 12, 10), mat); m.position.copy(dir).multiplyScalar(0.6); m.position.y *= 0.42; g.add(m); };
-  pupil(eyeA, 0.13, pmMilk); pupil(eyeB, 0.095, pmDark);   // one milky-blind, one wet-dark — bigger, so the face reads
-  return {
-    group: g, skin,
-    update(t) {
-      const breath = 0.5 + 0.5 * Math.sin(t * 1.0 + Math.sin(t * 0.37) * 1.6);
-      const twitch = 0.5 + 0.5 * Math.sin(t * 2.7 + Math.sin(t * 1.3) * 2.0);
-      body.scale.set(1 + 0.05 * breath + 0.02 * twitch, 1 + 0.11 * breath, 1 + 0.05 * breath - 0.015 * twitch);  // uneven, wrong breath
-      skin.emissiveIntensity = 0.1 + 0.18 * breath;
-    },
-  };
-}
-
 export function buildBuildings(scene, colliders) {
   const doors = {};
   const anchors = {};
   const lamps = [];        // {light, bulbMat, base}
-  const breathers = [];    // { update(t) } — the upstairs thing that breathes
+  const breathers = [];    // { update(dt, t, ctx) } — the upstairs thing that breathes
+  let thing = null;        // the Unfinished (upstairs set-piece) — exposed for main.js/harness hooks
   let updateMirror = () => {};   // per-frame: drive the upstairs mirror's live reflection
   const glowPlanes = [];   // glow materials (opacity flicker)
   const glowMeshes = [];   // the glow meshes themselves (visibility toggled with power)
@@ -1429,16 +1350,88 @@ export function buildBuildings(scene, colliders) {
       lamps.push({ light, bulbMat: bulb.material, base: 3.5, warmup: 0 });
     }
 
-    // a bare upstairs bedroom (east wing) + THE THING THAT BREATHES
+    // a bare upstairs bedroom (east wing) + THE UNFINISHED (see THING_PLAN.md)
     house.add(spawn('GothicBed_01', { x: 10.4, y: deckY, z: -4.4, ry: Math.PI / 2 }));
     ucbox(10.5, -4.5, 1.7, 2.2, false);
-    const mass = buildBreathingMass();
-    mass.group.position.set(10.1, deckY + 0.55, -1.7);  // low (flat mass pooled on the floor), toward the east wall for a clear lane
-    mass.group.rotation.y = -Math.PI / 2;               // the face turns toward the doorway
-    house.add(mass.group);
-    ucbox(10.1, -1.7, 2.6, 2.6, false);                 // covers the lumpy growths; still leaves a ~1.5 m lane west of it
-    breathers.push(mass);
-    anchors.breather = { x: HX + 10.1, z: HZ - 1.7, y: FY + deckY + 1.0 };
+    thing = buildTheThing();
+    // South of the east chimney breast (stone shaft x 9.72..11.08, z -2.82..-1.59):
+    // the north lobes pile against its stone; the wall-climb sits on clear wall.
+    thing.group.position.set(10.1, deckY, -0.35);       // sculpt's y0 = the boards; local +x = the east wall
+    house.add(thing.group);
+    ucbox(10.35, -0.3, 2.7, 3.3, false);                // the body; leaves a ~1.8 m lane west of it
+    ucbox(8.85, -0.95, 0.7, 0.7, false);                // the planted arm/hand (so you can't wade through it)
+    breathers.push(thing);
+    anchors.breather = { x: HX + 10.1, z: HZ - 0.35, y: FY + deckY + 0.8 };
+
+    // ---- the room it is claiming (THING_PLAN §2.8) --------------------------
+    // A soaked stain under the mass, dark vein-cords crawling around the
+    // chimney breast toward the bed and up the east wall — and, on the GROUND
+    // floor below, the bulging ceiling stain + hanging strands that plant the
+    // rumor before anyone climbs the stairs.
+    const stainTex = canvasTexture((g, W, H) => {
+      g.clearRect(0, 0, W, H);
+      const blot = (x, y, r, a) => {
+        const gr = g.createRadialGradient(x, y, r * 0.1, x, y, r);
+        gr.addColorStop(0, `rgba(18,10,14,${a})`);
+        gr.addColorStop(0.7, `rgba(26,16,20,${a * 0.55})`);
+        gr.addColorStop(1, 'rgba(26,16,20,0)');
+        g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2);
+      };
+      blot(128, 118, 95, 0.9);
+      for (let i = 0; i < 14; i++)
+        blot(128 + (Math.sin(i * 2.71) * 78), 118 + (Math.cos(i * 1.93) * 66), 18 + (i * 7) % 30, 0.5);
+      // drip fingers wandering off the main body
+      g.strokeStyle = 'rgba(20,12,16,0.55)'; g.lineWidth = 3;
+      for (let i = 0; i < 7; i++) {
+        g.beginPath();
+        let x = 128 + Math.sin(i * 2.1) * 60, y = 118 + Math.cos(i * 1.4) * 55;
+        g.moveTo(x, y);
+        for (let s = 0; s < 6; s++) { x += Math.sin(i * 3.7 + s) * 9; y += 12 + (s % 3) * 4; g.lineTo(x, y); }
+        g.stroke();
+      }
+    }, 256, 256);
+    const stainMat = new THREE.MeshLambertMaterial({ map: stainTex, transparent: true, depthWrite: false });
+    const stain = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 4.2), stainMat);
+    stain.rotation.x = -Math.PI / 2;
+    stain.position.set(10.1, deckY + 0.006, -0.35);
+    house.add(stain);
+
+    // vein-cords: merged tubes; floor runs go AROUND the chimney's west side
+    const veinMat = new THREE.MeshLambertMaterial({ color: 0x241a20 });
+    const veinGeos = [];
+    const vein = (pts, r) => {
+      const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
+      veinGeos.push(new THREE.TubeGeometry(curve, 16, r, 5, false));
+    };
+    vein([[9.5, deckY + 0.02, -0.7], [9.25, deckY + 0.015, -1.6], [9.3, deckY + 0.012, -2.5], [9.8, deckY + 0.012, -3.3], [10.15, deckY + 0.02, -3.6]], 0.028);
+    vein([[9.7, deckY + 0.02, -0.95], [9.45, deckY + 0.012, -1.9], [9.6, deckY + 0.01, -2.9], [10.0, deckY + 0.015, -3.42]], 0.02);
+    vein([[10.6, deckY + 0.02, -1.55], [10.9, deckY + 0.012, -2.0], [11.1, deckY + 0.01, -2.4]], 0.016);
+    vein([[11.68, deckY + 0.25, -0.9], [11.71, deckY + 0.9, -1.1], [11.73, deckY + 1.6, -1.0], [11.73, deckY + 2.1, -0.75]], 0.022);
+    vein([[11.68, deckY + 0.3, 0.5], [11.72, deckY + 0.8, 0.7], [11.73, deckY + 1.3, 0.65]], 0.016);
+    const veins = new THREE.Mesh(mergeGeometries(veinGeos, false), veinMat);
+    veins.castShadow = false;
+    house.add(veins);
+
+    // below, on the ground-floor bedroom ceiling: the swollen stain it rests
+    // on, and a few strands that have found their way through the boards.
+    // NOTE: the visible ceiling from below is the DECK UNDERSIDE (deckY - dT),
+    // not GROUND_CEIL_Y (a world-space collider constant).
+    const ceilLocalY = deckY - dT - 0.012;
+    const under = new THREE.Mesh(new THREE.PlaneGeometry(2.9, 2.5), stainMat);
+    under.rotation.x = Math.PI / 2;                       // faces DOWN into the room
+    under.position.set(10.1, ceilLocalY, -0.35);
+    house.add(under);
+    const strandGeos = [];
+    for (const [sx, sz, len] of [[9.6, -0.9, 0.42], [10.4, 0.2, 0.3], [10.8, -1.1, 0.5], [9.9, 0.6, 0.24], [10.3, -0.5, 0.36]]) {
+      const gg = new THREE.CylinderGeometry(0.008, 0.016, len, 5);
+      gg.translate(sx, ceilLocalY - 0.008 - len / 2, sz);
+      strandGeos.push(gg);
+    }
+    const strands = new THREE.Mesh(mergeGeometries(strandGeos, false), veinMat);
+    strands.castShadow = false;
+    house.add(strands);
+    // the caretaker's dropped warning, on the boards beneath the stain
+    anchors.thingNote = { x: HX + 9.4, z: HZ - 0.3, y: FY + 0.06 };
 
     // furnish the other upstairs rooms so they read as real (shuttered bedrooms + stores)
     const up = (name, x, z, ry = 0) => house.add(spawn(name, { x, y: deckY, z, ry }));
@@ -1887,7 +1880,7 @@ export function buildBuildings(scene, colliders) {
   const doorList = Object.values(doors);
 
   let t = 0;
-  function update(dt) {
+  function update(dt, ctx) {
     t += dt;
     for (const d of doorList) d.update(dt);
     piano.update(dt);
@@ -1905,7 +1898,7 @@ export function buildBuildings(scene, colliders) {
         l.bulbMat.color.setHex(0x201a12);
       }
     }
-    for (const b of breathers) b.update(t);            // the upstairs thing breathes on its own clock
+    for (const b of breathers) b.update(dt, t, ctx);   // the upstairs thing (ctx: player pos/dir, upstairs flag)
     for (const g of glowPlanes) g.opacity = power ? 0.75 + Math.sin(t * 9.1) * 0.08 : 0;
     // window glow visibility — toggle the collected glow meshes directly instead
     // of walking the whole mansion scene graph (+ allocating a closure) each frame
@@ -1939,7 +1932,7 @@ export function buildBuildings(scene, colliders) {
     houseCenter: { x: HX, z: HZ },
     isPowered: () => power,
     lantern: { mat: lanternMat, light: lanternLight },
-    boatChain, cellar, piano,
+    boatChain, cellar, piano, thing,
     paintings: { corridor: corridorPainting },
     serialize, restore,
   };

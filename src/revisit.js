@@ -16,6 +16,7 @@
 // tests per frame and allocates nothing.
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { LAYOUT } from './config.js';
 import { CELLAR, canvasTexture } from './world.js';
 
@@ -98,6 +99,35 @@ export function buildRevisit(scene, ctx) {
   }
   chalkGrown.visible = false;
 
+  // Wet drag-marks up the staircase treads (the rumor of the thing upstairs,
+  // THING_PLAN §2.8): three smeared treads + the landing, merged into one
+  // hidden mesh. Surfaced by change 7 below while Ana is away.
+  const dragTex = canvasTexture((c, W, H) => {
+    c.clearRect(0, 0, W, H);
+    for (let i = 0; i < 9; i++) {
+      const x = 20 + i * 24 + (i % 3) * 6, w = 6 + (i % 4) * 3;
+      const grad = c.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, 'rgba(16,10,14,0)');
+      grad.addColorStop(0.4, 'rgba(16,10,14,0.7)');
+      grad.addColorStop(1, 'rgba(16,10,14,0.15)');
+      c.fillStyle = grad;
+      c.fillRect(x, 0, w, H);
+    }
+  }, 256, 128);
+  const dragMat = new THREE.MeshLambertMaterial({ map: dragTex, transparent: true, depthWrite: false });
+  const dragGeos = [];
+  // stair: local x centre 1.1; tread tops from mansion's formula (house at 0,2.1,-14)
+  for (const [wy, wz] of [[2.796, -10.4], [3.725, -12.0], [4.654, -13.6], [5.35, -15.25]]) {
+    const gg = new THREE.PlaneGeometry(0.78, 0.52);
+    gg.rotateX(-Math.PI / 2);
+    gg.translate(1.1, wy + 0.012, wz);
+    dragGeos.push(gg);
+  }
+  const dragMarks = new THREE.Mesh(mergeGeometries(dragGeos, false), dragMat);
+  dragMarks.renderOrder = 2;
+  dragMarks.visible = false;
+  scene.add(dragMarks);
+
   // ------------------------------------------------------------ the changes
   // Each: inside(p) — is Ana in the zone; gate() — phase/flag threshold; apply()
   // — the one-time change (fired while away); notice?() — optional line on return.
@@ -146,6 +176,16 @@ export function buildRevisit(scene, ctx) {
       inside: (p) => dist(p, HX + 1.7, HZ + 5.2) < 4.5,
       gate: () => night.phase > 0.50,
       apply: () => { buildings.paintings.corridor.rotation.z = 0.24; },
+    },
+    {
+      // 7) wet drag-marks up the staircase, found on return — something went
+      //    up (or came partway down) while she was elsewhere. The stairs start
+      //    asking the question the caretaker's note plants.
+      id: 'stairDrag',
+      inside: (p) => dist(p, HX + 1.1, HZ + 2.0) < 4.5,
+      gate: () => night.phase > 0.45,
+      apply: () => { dragMarks.visible = true; },
+      notice: () => ui.say('ANA', 'The stairs are wet. Dragged wet, in stripes, all the way up. That was not there when I passed.', 4.6),
     },
   ];
 
