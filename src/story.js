@@ -18,6 +18,10 @@ const EV_TOTAL = 6;
 // her repeatedly, ONE at a time, up to MARA_ESCORT_MAX for the episode — with
 // the ambient Returned suppressed so a new player isn't overwhelmed.
 const MARA_ESCORT_MAX = 5;
+// Where she settles inside the boathouse: by the north wall, west of the
+// barrels, facing the mouth and the moored boat. Shared with restore(), which
+// snaps a loaded game straight to this spot.
+const MARA_BOAT_SIT = { x: LAYOUT.boathouse.x - 1.4, z: LAYOUT.boathouse.z - 2.1 };
 const MARA_ROUTE_BOAT = [
   { x: 34, z: -26 },     // [0] centre aisle, heading for the west door
   { x: 30, z: -26 },     // [1] the west door gap
@@ -26,8 +30,17 @@ const MARA_ROUTE_BOAT = [
   { x: 10, z: 4 },
   { x: -6, z: 26 },
   { x: -26, z: 46 },
-  { x: LAYOUT.boathouse.x + 3.0, z: LAYOUT.boathouse.z - 2.6 },   // boathouse walkway
+  // The only walkable way in is the WEST door (the lake mouth is silled off),
+  // so the route swings along the shore, wide around the NW corner, squares up
+  // with the doorway, and only then crosses the wall line — a straight shot at
+  // the old "walkway" endpoint from the NE just rammed her into the shore wall.
+  { x: LAYOUT.boathouse.x + 2.0, z: LAYOUT.boathouse.z - 6.5 },   // [7] shore, north of the boathouse
+  { x: LAYOUT.boathouse.x - 6.2, z: LAYOUT.boathouse.z - 4.1 },   // [8] wide of the NW corner — the door swings open here
+  { x: LAYOUT.boathouse.x - 6.0, z: LAYOUT.boathouse.z - 2.9 },   // [9] square with the west door
+  { x: LAYOUT.boathouse.x - 3.6, z: LAYOUT.boathouse.z - 2.9 },   // [10] through the doorway
+  { x: MARA_BOAT_SIT.x, z: MARA_BOAT_SIT.z },                     // [11] her spot inside
 ];
+const MARA_BOAT_DOOR_WP = 8;   // reaching this waypoint opens the boathouse door for her
 const MARA_ROUTE_FIRE = [
   { x: 34, z: -26 },     // centre aisle
   { x: 30, z: -26 },     // west door
@@ -605,8 +618,9 @@ export class Story {
       } else if (this.maraFate === 'destroyed') {
         npc.relocate(LAYOUT.camp.x, LAYOUT.camp.z + 1.35, Math.PI);   // seated at the fire
       } else {
-        npc._showWalker();                            // stand her by the boat
-        npc.relocate(LAYOUT.boathouse.x + 3.0, LAYOUT.boathouse.z - 2.6, 0);
+        // seated inside the boathouse where the escort walk ends (she builds
+        // seated, so relocate moves the huddle rig — no pose swap needed)
+        npc.relocate(MARA_BOAT_SIT.x, MARA_BOAT_SIT.z, 0);
       }
       if (this._maraItem) { this._maraItem.x = npc.x; this._maraItem.z = npc.z; this._maraItem.y = this.world.groundHeight(npc.x, npc.z) + 1.0; }
     }
@@ -725,7 +739,12 @@ export class Story {
       // episode, so a new player faces one clean threat at a time, not a mob.
       this.director.clearAll();
       this.director.suppressSpawns = true;
-      npc.walkTo(MARA_ROUTE_BOAT, { settle: 'standing', finalYaw: 0 });
+      npc.walkTo(MARA_ROUTE_BOAT, {
+        settle: 'seated', finalYaw: 0,            // sits inside, facing the mouth and the boat
+        // she shoulders the door open as she rounds the corner to it, so the
+        // leaf (and its collider) is out of her way before she crosses the wall
+        onWaypoint: (i) => { if (i === MARA_BOAT_DOOR_WP) this.buildings.doors.boathouse.setOpen(true); },
+      });
       this.setObjective('Get Mara to the boat', 'keep your camera ready — the flash is all that saves her');
     }
     if (fate === 'taken') {
@@ -753,10 +772,14 @@ export class Story {
     } else if (!npc.walking) {
       this.finishEscort();                              // she made it to the boat
     } else if (!npc._paused && esc.count < esc.max) {
-      // between attacks, once she's clear of the greenhouse, the next reaches for her
+      // between attacks, once she's clear of the greenhouse, the next reaches for
+      // her — but not on the final approach: a grab at (or inside) the boathouse
+      // doorway can't be framed by the player, and the Returned can't path in
+      // after her, so the 18 s limit would lose her through no one's fault.
       esc.cooldown -= dt;
       const clearOfGreenhouse = Math.hypot(npc.x - LAYOUT.green.x, npc.z - LAYOUT.green.z) > 6;
-      if (esc.cooldown <= 0 && clearOfGreenhouse) this._spawnMaraAttacker();
+      const shortOfBoathouse = Math.hypot(npc.x - LAYOUT.boathouse.x, npc.z - LAYOUT.boathouse.z) > 14;
+      if (esc.cooldown <= 0 && clearOfGreenhouse && shortOfBoathouse) this._spawnMaraAttacker();
     }
   }
 

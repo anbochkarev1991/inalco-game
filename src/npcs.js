@@ -193,6 +193,8 @@ export function buildNPCs(scene, colliders) {
       const grp = this._activeGroup();
       grp.position.set(x, groundHeight(x, z), z);
       grp.rotation.y = yaw;
+      // her body is a fixed obstacle wherever she's placed
+      maraCircle.x = x; maraCircle.z = z; maraCircle.enabled = true;
     },
     // Stand up and walk an authored waypoint route. opts:
     //   settle:'seated'|'standing' — the pose she lands in; finalYaw — heading on
@@ -209,12 +211,14 @@ export function buildNPCs(scene, colliders) {
       this._showWalker();
     },
     // taken by the lake — remove her from the world entirely
-    hide() { mara.group.visible = false; maraWalker.group.visible = false; this._walking = false; },
+    hide() { mara.group.visible = false; maraWalker.group.visible = false; this._walking = false; maraCircle.enabled = false; },
     _arrive() {
       this._walking = false; this._amp = 0;
       poseMaraWalk(maraWalker.bones, 0, 0);
       if (this._settle === 'seated') this._showSeated();
       if (this._finalYaw != null) this._activeGroup().rotation.y = this._finalYaw;
+      // she's a fixed prop again — her obstacle circle follows her to the seat
+      maraCircle.x = this.x; maraCircle.z = this.z; maraCircle.enabled = true;
       const cb = this._onArrive; this._onArrive = null; this._onWaypoint = null;
       if (cb) cb(this);
     },
