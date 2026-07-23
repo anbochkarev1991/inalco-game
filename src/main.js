@@ -321,6 +321,16 @@ window.addEventListener('keydown', (e) => {
   if (overlay) { if (e.code === 'Escape') closeOverlay(); return; }
   // the finale: any key fast-forwards the current credits phase (never freezes)
   if (state === 'END') { ui.endAdvance(); return; }
+  // Esc during an UNLOCKED play state: open the pause screen directly. When the
+  // pointer is locked the browser eats Esc to release the lock and the
+  // pointerlockchange handler below pauses; without the lock (auto-started run,
+  // rejected/dropped lock) that path never fires and Esc would do nothing.
+  if (e.code === 'Escape' && state === 'PLAY' && document.pointerLockElement !== renderer.domElement) {
+    player.raiseCamera(false);
+    state = 'PAUSE'; refreshPauseMeta(); ui.showPause(true);
+    saveCheckpoint();
+    return;
+  }
   const k = KEYMAP[e.code];
   if (k) input[k] = true;
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') input.run = true;
@@ -374,7 +384,17 @@ document.addEventListener('mousedown', (e) => {
     if (!e.target.closest('button, input, .jtab')) { audio.ensure(); requestLock(); }
     return;
   }
-  if (state === 'PLAY' && document.pointerLockElement === renderer.domElement && !ui.noteOpen) {
+  if (state === 'PLAY' && document.pointerLockElement !== renderer.domElement) {
+    // pointer lock isn't held — the request at game start was rejected (an
+    // auto-started run has no user gesture: ?newgame / ?skipintro / the pause
+    // RESTART button all boot straight into PLAY) or the browser dropped it.
+    // Without this, every click lands here and is swallowed: mouse-look, the
+    // camera, and Esc-to-pause (which rides the lock release) are all dead
+    // with no way back. Any click re-arms the lock instead.
+    audio.ensure(); requestLock();
+    return;
+  }
+  if (state === 'PLAY' && !ui.noteOpen) {
     if (e.button === 2) { player.raiseCamera(true); return; }   // right-click: raise camera to the eye
     if (e.button !== 0) return;
     if (!player.aiming) {
